@@ -1,23 +1,17 @@
 $path = "app\page.tsx"
 $content = Get-Content $path -Raw -Encoding UTF8
 
-# 1. Add refreshKey state after saving state
+# Save tab to localStorage on change, and restore on load
 $content = $content.Replace(
-  "const [saving, setSaving] = useState(false)",
-  "const [saving, setSaving] = useState(false)`n  const [cargaRefreshKey, setCargaRefreshKey] = useState(0)"
+  "const [tab, setTab] = useState('Todas')",
+  "const [tab, setTab] = useState(() => { try { return localStorage.getItem('gt_tab') || 'Todas' } catch { return 'Todas' } })"
 )
 
-# 2. Increment refreshKey after saveTask
+# Wrap setTab to also save to localStorage
 $content = $content.Replace(
-  "setSaving(false); setModal(false); setForm(empty); setErrors({}); setEditId(null)`n    fetchTareas()",
-  "setSaving(false); setModal(false); setForm(empty); setErrors({}); setEditId(null)`n    setCargaRefreshKey(k => k + 1)`n    fetchTareas()"
-)
-
-# 3. Pass props to CargaTrabajo
-$content = $content.Replace(
-  "{tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} /> : <>",
-  "{tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : <>"
+  "onClick={()=>setTab(key)}",
+  "onClick={()=>{ setTab(key); try { localStorage.setItem('gt_tab', key) } catch {} }}"
 )
 
 [System.IO.File]::WriteAllText((Resolve-Path $path).Path, $content, [System.Text.UTF8Encoding]::new($false))
-Write-Host "page.tsx parcheado correctamente"
+Write-Host "page.tsx parcheado"

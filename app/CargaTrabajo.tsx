@@ -64,15 +64,15 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const [jornadas, setJornadas] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('pendientes')
-  const [soloLaborables, setSoloLaborables] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>(() => { try { return (localStorage.getItem('gt_carga_mode') as ViewMode) || 'pendientes' } catch { return 'pendientes' } })
+  const [soloLaborables, setSoloLaborables] = useState(() => { try { return localStorage.getItem('gt_carga_laborables') === 'true' } catch { return false } })
   const [editingJornada, setEditingJornada] = useState<string | null>(null)
   const [jornadaInput, setJornadaInput] = useState('')
   const [savingJornada, setSavingJornada] = useState(false)
 
   const now = new Date()
-  const [viewMonth, setViewMonth] = useState(now.getMonth())
-  const [viewYear, setViewYear] = useState(now.getFullYear())
+  const [viewMonth, setViewMonth] = useState(() => { try { const v = localStorage.getItem('gt_carga_month'); return v !== null ? parseInt(v) : now.getMonth() } catch { return now.getMonth() } })
+  const [viewYear, setViewYear] = useState(() => { try { const v = localStorage.getItem('gt_carga_year'); return v !== null ? parseInt(v) : now.getFullYear() } catch { return now.getFullYear() } })
   const todayStr = dateKey(now)
 
   const fetchAll = useCallback(async () => {
@@ -134,8 +134,8 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const totalFichadoMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)
   const pctOcupacion = totalFichadoMes > 0 ? Math.round((totalPendiente / totalFichadoMes) * 100) : null
 
-  const prevMonth = () => { if (viewMonth===0){setViewMonth(11);setViewYear(y=>y-1)}else setViewMonth(m=>m-1) }
-  const nextMonth = () => { if (viewMonth===11){setViewMonth(0);setViewYear(y=>y+1)}else setViewMonth(m=>m+1) }
+  const prevMonth = () => { if (viewMonth===0){ setViewMonth(11); setViewYear(y=>{ const ny=y-1; try{localStorage.setItem('gt_carga_year',String(ny))}catch{}; return ny }); try{localStorage.setItem('gt_carga_month','11')}catch{} } else { const nm=viewMonth-1; setViewMonth(nm); try{localStorage.setItem('gt_carga_month',String(nm))}catch{} } }
+  const nextMonth = () => { if (viewMonth===11){ setViewMonth(0); setViewYear(y=>{ const ny=y+1; try{localStorage.setItem('gt_carga_year',String(ny))}catch{}; return ny }); try{localStorage.setItem('gt_carga_month','0')}catch{} } else { const nm=viewMonth+1; setViewMonth(nm); try{localStorage.setItem('gt_carga_month',String(nm))}catch{} } }
 
   function barColor(totalMin: number): string {
     if (totalMin > 480) return 'bg-red-400'       // >8h rojo
@@ -176,13 +176,13 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
             {([['pendientes','Pendientes'],['historial','Historial'],['todo','Todo']] as [ViewMode,string][]).map(([m,l])=>(
-              <button key={m} onClick={()=>setViewMode(m)}
+              <button key={m} onClick={()=>{ setViewMode(m); try { localStorage.setItem('gt_carga_mode', m) } catch {} }}
                 className={`text-xs px-3 py-1.5 rounded-md font-medium transition ${viewMode===m?'bg-white text-gray-900 shadow-sm':'text-gray-500 hover:text-gray-700'}`}>
                 {l}
               </button>
             ))}
           </div>
-          <button onClick={()=>setSoloLaborables(v=>!v)}
+          <button onClick={()=>setSoloLaborables(v=>{ const next = !v; try { localStorage.setItem('gt_carga_laborables', String(next)) } catch {}; return next })}
             className={`text-xs px-3 py-1.5 rounded-lg border transition font-medium ${soloLaborables?'bg-gray-900 text-white border-gray-900':'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
             {soloLaborables?'Solo laborables':'Todos los días'}
           </button>

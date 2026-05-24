@@ -456,7 +456,7 @@ export default function Home() {
   const [importModal, setImportModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [editId, setEditId] = useState<number | null>(null)
-  const [tab, setTab] = useState('Todas')
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem('gt_tab') || 'Todas' } catch { return 'Todas' } })
   const [saving, setSaving] = useState(false)
   const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -996,7 +996,7 @@ export default function Home() {
             {TABS.map(({key,label,emoji,sub})=>{
               const count=tabCount(key); const isActive=tab===key
               return(
-                <button key={key} onClick={()=>setTab(key)} title={sub||undefined}
+                <button key={key} onClick={()=>{ setTab(key); try { localStorage.setItem('gt_tab', key) } catch {} }} title={sub||undefined}
                   className={`px-3.5 py-2 rounded-lg text-sm transition font-medium flex items-center gap-2 ${isActive?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}>
                   <span>{emoji}</span>
                   <span className="flex items-baseline gap-1.5">
