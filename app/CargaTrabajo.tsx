@@ -51,6 +51,13 @@ function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+function formatDeadline(dateStr: string): string {
+  if (!dateStr) return ''
+  const [y, m, d] = dateStr.split('-')
+  const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
+  return `${parseInt(d)} ${months[parseInt(m)-1]}`
+}
+
 const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -64,7 +71,8 @@ export default function CargaTrabajo() {
   const [editingJornada, setEditingJornada] = useState<string | null>(null)
   const [jornadaInput, setJornadaInput] = useState('')
   const [savingJornada, setSavingJornada] = useState(false)
-
+  const [editingDeadline, setEditingDeadline] = useState<number | null>(null)
+  const [savingDeadline, setSavingDeadline] = useState(false)
 
   const now = new Date()
   const [viewMonth, setViewMonth] = useState(now.getMonth())
@@ -86,7 +94,13 @@ export default function CargaTrabajo() {
     setLoading(false)
   }
 
-
+  async function saveDeadline(tareaId: number, newDeadline: string) {
+    setSavingDeadline(true)
+    await supabase.from('tareas').update({ deadline: newDeadline || null }).eq('id', tareaId)
+    setAllTareas(prev => prev.map(t => t.id === tareaId ? { ...t, deadline: newDeadline } : t))
+    setSavingDeadline(false)
+    setEditingDeadline(null)
+  }
 
   async function saveJornada(fecha: string, minutos: number) {
     setSavingJornada(true)
@@ -96,7 +110,6 @@ export default function CargaTrabajo() {
     setEditingJornada(null)
   }
 
-  // Filter tareas by view mode
   const tareas = allTareas.filter(t => {
     if (viewMode === 'pendientes') return !t.done && t.estado !== 'Omitida' && t.estado !== 'Completada'
     if (viewMode === 'historial') return t.done || t.estado === 'Omitida' || t.estado === 'Completada'
@@ -125,7 +138,6 @@ export default function CargaTrabajo() {
     return min > 480
   }).length
 
-  // Total fichado this month
   const totalFichadoMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)
   const pctOcupacion = totalFichadoMes > 0 ? Math.round((totalPendiente / totalFichadoMes) * 100) : null
 
@@ -155,7 +167,6 @@ export default function CargaTrabajo() {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
-          {/* View mode toggle */}
           <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
             {([['pendientes','Pendientes'],['historial','Historial'],['todo','Todo']] as [ViewMode,string][]).map(([m,l])=>(
               <button key={m} onClick={()=>setViewMode(m)}
@@ -164,9 +175,6 @@ export default function CargaTrabajo() {
               </button>
             ))}
           </div>
-
-
-
           <button onClick={()=>setSoloLaborables(v=>!v)}
             className={`text-xs px-3 py-1.5 rounded-lg border transition font-medium ${soloLaborables?'bg-gray-900 text-white border-gray-900':'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
             {soloLaborables?'Solo laborables':'Todos los días'}
@@ -228,7 +236,6 @@ export default function CargaTrabajo() {
                 <div className="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-gray-50/50 transition"
                   onClick={()=>setExpandedDay(isExpanded?null:key)}>
 
-                  {/* Day + time */}
                   <div className="w-32 flex-shrink-0">
                     <div className={`text-sm font-semibold ${isToday?'text-blue-600':isPast?'text-gray-300':d.getDay()===0||d.getDay()===6?'text-gray-400':'text-gray-700'}`}>
                       {DAY_NAMES[d.getDay()]} {d.getDate()}
@@ -240,14 +247,12 @@ export default function CargaTrabajo() {
                     </div>
                   </div>
 
-                  {/* Bar */}
                   <div className="flex-1 relative h-6 bg-gray-50 rounded-lg overflow-hidden">
                     <div className="absolute top-0 bottom-0 w-px bg-gray-300 z-10" style={{left:`${Math.min(jornadaPct,99)}%`}}></div>
                     {totalMin>0&&<div className={`h-full rounded-lg transition-all ${barColor}`} style={{width:`${Math.min(pct,100)}%`}}></div>}
                     {isOver&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-500">+{minToHM(totalMin-480)}</div>}
                   </div>
 
-                  {/* Fichado — editable, prefilled from cronómetro */}
                   <div className="w-28 flex-shrink-0 flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
                     {editingJornada===key ? (
                       <div className="flex items-center gap-1">
@@ -267,7 +272,6 @@ export default function CargaTrabajo() {
                     )}
                   </div>
 
-                  {/* Count + chevron */}
                   <div className="w-20 flex-shrink-0 flex items-center justify-end gap-2">
                     {dayTareas.length>0&&<span className="text-xs text-gray-400">{dayTareas.length} tarea{dayTareas.length!==1?'s':''}</span>}
                     {dayTareas.length>0&&(
@@ -279,14 +283,40 @@ export default function CargaTrabajo() {
                   </div>
                 </div>
 
-                {/* Expanded */}
                 {isExpanded&&dayTareas.length>0&&(
                   <div className="px-5 pb-3 space-y-1.5 border-t border-gray-50">
                     {dayTareas.sort((a,b)=>(b.tiempo_estimado||0)-(a.tiempo_estimado||0)).map(t=>(
-                      <div key={t.id} className="flex items-center gap-3 py-1.5 px-3 bg-gray-50 rounded-lg">
+                      <div key={t.id} className="flex items-center gap-3 py-1.5 px-3 bg-gray-50 rounded-lg group">
                         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
                         <span className={`text-xs flex-1 truncate font-medium ${TIPO_TEXT[t.tipo]||'text-gray-600'}`} title={t.tarea}>{t.tarea}</span>
                         <span className="text-xs text-gray-400 flex-shrink-0">{minToHM(t.tiempo_estimado)}</span>
+
+                        {/* Deadline editable */}
+                        <div className="flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                          {editingDeadline===t.id ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="date"
+                                defaultValue={t.deadline||''}
+                                onChange={e=>{ if(e.target.value) saveDeadline(t.id, e.target.value) }}
+                                onKeyDown={e=>{ if(e.key==='Escape') setEditingDeadline(null) }}
+                                className="border border-blue-300 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-500 bg-white"
+                                autoFocus
+                                disabled={savingDeadline}
+                              />
+                              <button onClick={()=>setEditingDeadline(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={()=>setEditingDeadline(t.id)}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-transparent hover:border-gray-200 hover:bg-white transition text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"
+                              title="Cambiar deadline"
+                            >
+                              📅 {t.deadline ? formatDeadline(t.deadline) : 'sin fecha'}
+                            </button>
+                          )}
+                        </div>
+
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
                           t.estado==='Completada'?'bg-emerald-100 text-emerald-600':
                           t.estado==='Omitida'?'bg-gray-100 text-gray-400':
@@ -317,11 +347,34 @@ export default function CargaTrabajo() {
           </div>
           <div className="divide-y divide-gray-50">
             {sinDeadline.map(t=>(
-              <div key={t.id} className="flex items-center gap-3 px-5 py-3 bg-white hover:bg-gray-50/50 transition">
+              <div key={t.id} className="flex items-center gap-3 px-5 py-3 bg-white hover:bg-gray-50/50 transition group">
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
                 <span className="text-sm text-gray-700 flex-1 truncate">{t.tarea}</span>
                 <span className="text-xs text-gray-400">{minToHM(t.tiempo_estimado)}</span>
                 <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${TIPO_TEXT[t.tipo]||'text-gray-500'}`}>{t.tipo}</span>
+                <div className="flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                  {editingDeadline===t.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="date"
+                        defaultValue={t.deadline||''}
+                        onChange={e=>{ if(e.target.value) saveDeadline(t.id, e.target.value) }}
+                        onKeyDown={e=>{ if(e.key==='Escape') setEditingDeadline(null) }}
+                        className="border border-blue-300 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-500 bg-white"
+                        autoFocus
+                        disabled={savingDeadline}
+                      />
+                      <button onClick={()=>setEditingDeadline(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={()=>setEditingDeadline(t.id)}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-gray-200 text-gray-300 hover:text-gray-500 hover:border-gray-300 transition opacity-0 group-hover:opacity-100"
+                    >
+                      📅 asignar fecha
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
