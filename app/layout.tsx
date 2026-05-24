@@ -1,4 +1,4 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,7 +15,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'Gestor de Tareas',
   description: 'Gestor de tareas personal',
-  icons: { icon: '/favicon.svg' },
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.png', type: 'image/png' },
+    ],
+  },
 };
 
 export default function RootLayout({
