@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
 type Tarea = {
@@ -51,17 +51,15 @@ function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
-function formatDeadline(dateStr: string): string {
-  if (!dateStr) return ''
-  const [y, m, d] = dateStr.split('-')
-  const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
-  return `${parseInt(d)} ${months[parseInt(m)-1]}`
-}
-
 const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
-export default function CargaTrabajo() {
+type Props = {
+  onEditTarea?: (id: number) => void
+  refreshKey?: number
+}
+
+export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const [allTareas, setAllTareas] = useState<Tarea[]>([])
   const [jornadas, setJornadas] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
@@ -71,17 +69,13 @@ export default function CargaTrabajo() {
   const [editingJornada, setEditingJornada] = useState<string | null>(null)
   const [jornadaInput, setJornadaInput] = useState('')
   const [savingJornada, setSavingJornada] = useState(false)
-  const [editingDeadline, setEditingDeadline] = useState<number | null>(null)
-  const [savingDeadline, setSavingDeadline] = useState(false)
 
   const now = new Date()
   const [viewMonth, setViewMonth] = useState(now.getMonth())
   const [viewYear, setViewYear] = useState(now.getFullYear())
   const todayStr = dateKey(now)
 
-  useEffect(() => { fetchAll() }, [])
-
-  async function fetchAll() {
+  const fetchAll = useCallback(async () => {
     setLoading(true)
     const [{ data: t }, { data: j }] = await Promise.all([
       supabase.from('tareas').select('id,tipo,tarea,estado,tiempo_estimado,deadline,done'),
@@ -92,15 +86,14 @@ export default function CargaTrabajo() {
     ;(j || []).forEach((row: Jornada) => { jMap[row.fecha] = row.minutos_fichados })
     setJornadas(jMap)
     setLoading(false)
-  }
+  }, [])
 
-  async function saveDeadline(tareaId: number, newDeadline: string) {
-    setSavingDeadline(true)
-    await supabase.from('tareas').update({ deadline: newDeadline || null }).eq('id', tareaId)
-    setAllTareas(prev => prev.map(t => t.id === tareaId ? { ...t, deadline: newDeadline } : t))
-    setSavingDeadline(false)
-    setEditingDeadline(null)
-  }
+  useEffect(() => { fetchAll() }, [fetchAll])
+
+  // Refresh when parent saves a task
+  useEffect(() => {
+    if (refreshKey && refreshKey > 0) fetchAll()
+  }, [refreshKey, fetchAll])
 
   async function saveJornada(fecha: string, minutos: number) {
     setSavingJornada(true)
@@ -143,6 +136,20 @@ export default function CargaTrabajo() {
 
   const prevMonth = () => { if (viewMonth===0){setViewMonth(11);setViewYear(y=>y-1)}else setViewMonth(m=>m-1) }
   const nextMonth = () => { if (viewMonth===11){setViewMonth(0);setViewYear(y=>y+1)}else setViewMonth(m=>m+1) }
+
+  function barColor(totalMin: number): string {
+    if (totalMin > 480) return 'bg-red-400'       // >8h rojo
+    if (totalMin > 420) return 'bg-orange-400'    // >7h naranja
+    if (totalMin > 360) return 'bg-yellow-300'    // >6h amarillo
+    return 'bg-gray-200'
+  }
+
+  function barTextColor(totalMin: number): string {
+    if (totalMin > 480) return 'text-red-500'
+    if (totalMin > 420) return 'text-orange-500'
+    if (totalMin > 360) return 'text-yellow-500'
+    return 'text-gray-400'
+  }
 
   if (loading) return (
     <div className="flex items-center justify-center py-20 text-gray-300">
@@ -210,8 +217,9 @@ export default function CargaTrabajo() {
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Distribución por día</span>
           <div className="flex items-center gap-3 ml-auto text-xs text-gray-400">
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-gray-200 inline-block"></span>Libre</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-300 inline-block"></span>Cargado</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-400 inline-block"></span>Sobrecargado</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-yellow-300 inline-block"></span>&gt;6h</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-400 inline-block"></span>&gt;7h</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-400 inline-block"></span>&gt;8h</span>
           </div>
         </div>
 
@@ -225,10 +233,9 @@ export default function CargaTrabajo() {
             const jornadaPct = maxMin>0?(480/maxMin)*100:100
             const isToday = key===todayStr
             const isPast = key<todayStr && !isToday
-            const isOver = totalMin>480
-            const isNear = totalMin>480*0.8&&!isOver
             const isExpanded = expandedDay===key
-            const barColor = isOver?'bg-red-400':isNear?'bg-amber-300':'bg-gray-200'
+            const color = barColor(totalMin)
+            const textColor = barTextColor(totalMin)
             const pctOcDia = fichadoMin>0?Math.round((totalMin/fichadoMin)*100):null
 
             return (
@@ -241,7 +248,7 @@ export default function CargaTrabajo() {
                       {DAY_NAMES[d.getDay()]} {d.getDate()}
                       {isToday&&<span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">HOY</span>}
                     </div>
-                    <div className={`text-xs mt-0.5 font-medium ${isOver?'text-red-500':isNear?'text-amber-500':'text-gray-400'}`}>
+                    <div className={`text-xs mt-0.5 font-medium ${textColor}`}>
                       {totalMin>0?minToHM(totalMin):<span className="text-gray-200">—</span>}
                       {pctOcDia!==null&&<span className="ml-1.5 text-gray-400 font-normal">({pctOcDia}%)</span>}
                     </div>
@@ -249,8 +256,8 @@ export default function CargaTrabajo() {
 
                   <div className="flex-1 relative h-6 bg-gray-50 rounded-lg overflow-hidden">
                     <div className="absolute top-0 bottom-0 w-px bg-gray-300 z-10" style={{left:`${Math.min(jornadaPct,99)}%`}}></div>
-                    {totalMin>0&&<div className={`h-full rounded-lg transition-all ${barColor}`} style={{width:`${Math.min(pct,100)}%`}}></div>}
-                    {isOver&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-500">+{minToHM(totalMin-480)}</div>}
+                    {totalMin>0&&<div className={`h-full rounded-lg transition-all ${color}`} style={{width:`${Math.min(pct,100)}%`}}></div>}
+                    {totalMin>480&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-500">+{minToHM(totalMin-480)}</div>}
                   </div>
 
                   <div className="w-28 flex-shrink-0 flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
@@ -286,37 +293,13 @@ export default function CargaTrabajo() {
                 {isExpanded&&dayTareas.length>0&&(
                   <div className="px-5 pb-3 space-y-1.5 border-t border-gray-50">
                     {dayTareas.sort((a,b)=>(b.tiempo_estimado||0)-(a.tiempo_estimado||0)).map(t=>(
-                      <div key={t.id} className="flex items-center gap-3 py-1.5 px-3 bg-gray-50 rounded-lg group">
+                      <div key={t.id}
+                        className="flex items-center gap-3 py-1.5 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition group"
+                        onClick={()=>onEditTarea?.(t.id)}>
                         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
                         <span className={`text-xs flex-1 truncate font-medium ${TIPO_TEXT[t.tipo]||'text-gray-600'}`} title={t.tarea}>{t.tarea}</span>
                         <span className="text-xs text-gray-400 flex-shrink-0">{minToHM(t.tiempo_estimado)}</span>
-
-                        {/* Deadline editable */}
-                        <div className="flex-shrink-0" onClick={e=>e.stopPropagation()}>
-                          {editingDeadline===t.id ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="date"
-                                defaultValue={t.deadline||''}
-                                onChange={e=>{ if(e.target.value) saveDeadline(t.id, e.target.value) }}
-                                onKeyDown={e=>{ if(e.key==='Escape') setEditingDeadline(null) }}
-                                className="border border-blue-300 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-500 bg-white"
-                                autoFocus
-                                disabled={savingDeadline}
-                              />
-                              <button onClick={()=>setEditingDeadline(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={()=>setEditingDeadline(t.id)}
-                              className="text-[10px] px-1.5 py-0.5 rounded border border-transparent hover:border-gray-200 hover:bg-white transition text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"
-                              title="Cambiar deadline"
-                            >
-                              📅 {t.deadline ? formatDeadline(t.deadline) : 'sin fecha'}
-                            </button>
-                          )}
-                        </div>
-
+                        <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition flex-shrink-0">✏ editar</span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
                           t.estado==='Completada'?'bg-emerald-100 text-emerald-600':
                           t.estado==='Omitida'?'bg-gray-100 text-gray-400':
@@ -347,34 +330,14 @@ export default function CargaTrabajo() {
           </div>
           <div className="divide-y divide-gray-50">
             {sinDeadline.map(t=>(
-              <div key={t.id} className="flex items-center gap-3 px-5 py-3 bg-white hover:bg-gray-50/50 transition group">
+              <div key={t.id}
+                className="flex items-center gap-3 px-5 py-3 bg-white hover:bg-gray-50 cursor-pointer transition group"
+                onClick={()=>onEditTarea?.(t.id)}>
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
                 <span className="text-sm text-gray-700 flex-1 truncate">{t.tarea}</span>
                 <span className="text-xs text-gray-400">{minToHM(t.tiempo_estimado)}</span>
+                <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition">✏ editar</span>
                 <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${TIPO_TEXT[t.tipo]||'text-gray-500'}`}>{t.tipo}</span>
-                <div className="flex-shrink-0" onClick={e=>e.stopPropagation()}>
-                  {editingDeadline===t.id ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="date"
-                        defaultValue={t.deadline||''}
-                        onChange={e=>{ if(e.target.value) saveDeadline(t.id, e.target.value) }}
-                        onKeyDown={e=>{ if(e.key==='Escape') setEditingDeadline(null) }}
-                        className="border border-blue-300 rounded px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-500 bg-white"
-                        autoFocus
-                        disabled={savingDeadline}
-                      />
-                      <button onClick={()=>setEditingDeadline(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={()=>setEditingDeadline(t.id)}
-                      className="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-gray-200 text-gray-300 hover:text-gray-500 hover:border-gray-300 transition opacity-0 group-hover:opacity-100"
-                    >
-                      📅 asignar fecha
-                    </button>
-                  )}
-                </div>
               </div>
             ))}
           </div>

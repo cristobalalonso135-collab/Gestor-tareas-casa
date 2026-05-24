@@ -458,6 +458,7 @@ export default function Home() {
   const [editId, setEditId] = useState<number | null>(null)
   const [tab, setTab] = useState('Todas')
   const [saving, setSaving] = useState(false)
+  const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ added: number, skipped: number, toDelete: Tarea[], errors: string[] } | null>(null)
@@ -843,6 +844,7 @@ export default function Home() {
       await supabase.from('tareas').insert({ ...clean, orden: maxOrden+1 })
     }
     setSaving(false); setModal(false); setForm(empty); setErrors({}); setEditId(null)
+    setCargaRefreshKey(k => k + 1)
     fetchTareas()
   }
 
@@ -1014,7 +1016,7 @@ export default function Home() {
           )}
         </div>
 
-        {tab === 'Carga' ? <CargaTrabajo /> : <>
+        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : <>
 
         {/* STATS — dynamic by tab */}
         {tab === 'Plan' ? (
