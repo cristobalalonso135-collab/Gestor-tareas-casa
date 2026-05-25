@@ -459,6 +459,7 @@ export default function Home() {
   const [tab, setTab] = useState(() => { try { return localStorage.getItem('gt_tab') || 'Todas' } catch { return 'Todas' } })
   const [saving, setSaving] = useState(false)
   const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
+  const [planSortMode, setPlanSortMode] = useState<'manual'|'deadline'>(()=>{ try { return (localStorage.getItem('gt_plan_sort') as any) || 'manual' } catch { return 'manual' } })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ added: number, skipped: number, toDelete: Tarea[], errors: string[] } | null>(null)
@@ -1023,6 +1024,27 @@ export default function Home() {
           <PlanKpis tareas={tareas} filtered={filtered} cronoSeconds={cronoSeconds} cronoRunning={cronoRunning} onStart={startCrono} onPause={pauseCrono} onReset={resetCrono} formatCrono={formatCrono} today={today} previsionMin={previsionMin} setPrevisionMin={setPrevisionMin}/>
         ) : (
           <GeneralKpis tareas={tareas} filtered={filtered} tab={tab} today={today}/>
+        )}
+
+        {/* Plan sort toggle */}
+        {tab === 'Plan' && (
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-xs text-gray-400">Orden:</span>
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
+              <button
+                onClick={()=>{ setPlanSortMode('manual'); try{localStorage.setItem('gt_plan_sort','manual')}catch{} }}
+                className={`text-xs px-3 py-1.5 rounded-md font-medium transition flex items-center gap-1.5 ${planSortMode==='manual'?'bg-white text-gray-900 shadow-sm':'text-gray-500 hover:text-gray-700'}`}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+                Drag & drop
+              </button>
+              <button
+                onClick={()=>{ setPlanSortMode('deadline'); try{localStorage.setItem('gt_plan_sort','deadline')}catch{} }}
+                className={`text-xs px-3 py-1.5 rounded-md font-medium transition flex items-center gap-1.5 ${planSortMode==='deadline'?'bg-white text-gray-900 shadow-sm':'text-gray-500 hover:text-gray-700'}`}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                Por deadline
+              </button>
+            </div>
+          </div>
         )}
 
         {/* TABLE */}
