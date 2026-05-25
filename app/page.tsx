@@ -682,11 +682,21 @@ export default function Home() {
   }
 
   async function autoArchivarAyer() {
+    // Archive completed/omitted from previous days
     await supabase.from('tareas')
       .update({ excluir_plan: true })
       .or(`estado.eq.Completada,estado.eq.Omitida`)
       .lt('fecha_finalizacion', today)
       .neq('fecha_finalizacion', null as any)
+
+    // Reset excluir_plan for active tasks that were excluded on a previous day
+    await supabase.from('tareas')
+      .update({ excluir_plan: false, excluida_fecha: null })
+      .eq('excluir_plan', true)
+      .lt('excluida_fecha', today)
+      .neq('estado', 'Completada')
+      .neq('estado', 'Omitida')
+      .eq('done', false)
   }
 
   async function undoTask(t: Tarea) {
