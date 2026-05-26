@@ -64,15 +64,15 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const [jornadas, setJornadas] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>(() => { try { return (localStorage.getItem('gt_carga_mode') as ViewMode) || 'pendientes' } catch { return 'pendientes' } })
-  const [soloLaborables, setSoloLaborables] = useState(() => { try { return localStorage.getItem('gt_carga_laborables') === 'true' } catch { return false } })
+  const [viewMode, setViewMode] = useState<ViewMode>('pendientes')
+  const [soloLaborables, setSoloLaborables] = useState(false)
   const [editingJornada, setEditingJornada] = useState<string | null>(null)
   const [jornadaInput, setJornadaInput] = useState('')
   const [savingJornada, setSavingJornada] = useState(false)
 
   const now = new Date()
-  const [viewMonth, setViewMonth] = useState(() => { try { const v = localStorage.getItem('gt_carga_month'); return v !== null ? parseInt(v) : now.getMonth() } catch { return now.getMonth() } })
-  const [viewYear, setViewYear] = useState(() => { try { const v = localStorage.getItem('gt_carga_year'); return v !== null ? parseInt(v) : now.getFullYear() } catch { return now.getFullYear() } })
+  const [viewMonth, setViewMonth] = useState(now.getMonth())
+  const [viewYear, setViewYear] = useState(now.getFullYear())
   const todayStr = dateKey(now)
 
   const fetchAll = useCallback(async () => {
@@ -90,7 +90,6 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
-  // Refresh when parent saves a task
   useEffect(() => {
     if (refreshKey && refreshKey > 0) fetchAll()
   }, [refreshKey, fetchAll])
@@ -119,28 +118,30 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     byDay[t.deadline].push(t)
   })
 
+  // Retrasadas: tareas activas con deadline pasado
+  const retrasadas = allTareas.filter(t => t.deadline && t.deadline < todayStr && !t.done && t.estado !== 'Omitida' && t.estado !== 'Completada')
+  const retrasadasTotalMin = retrasadas.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+
   const maxMin = Math.max(480, ...workdays.map(d => {
-    return (byDay[dateKey(d)] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+    const dayMin = (byDay[dateKey(d)] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+    const extra = dateKey(d) === todayStr ? retrasadasTotalMin : 0
+    return dayMin + extra
   }))
 
   const sinDeadline = tareas.filter(t => !t.deadline)
   const totalPendiente = tareas.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
   const totalConDeadline = tareas.filter(t => !!t.deadline).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-  const diasSobrecargados = workdays.filter(d => {
-    const min = (byDay[dateKey(d)] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-    return min > 480
-  }).length
 
   const totalFichadoMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)
   const pctOcupacion = totalFichadoMes > 0 ? Math.round((totalPendiente / totalFichadoMes) * 100) : null
 
-  const prevMonth = () => { if (viewMonth===0){ setViewMonth(11); setViewYear(y=>{ const ny=y-1; try{localStorage.setItem('gt_carga_year',String(ny))}catch{}; return ny }); try{localStorage.setItem('gt_carga_month','11')}catch{} } else { const nm=viewMonth-1; setViewMonth(nm); try{localStorage.setItem('gt_carga_month',String(nm))}catch{} } }
-  const nextMonth = () => { if (viewMonth===11){ setViewMonth(0); setViewYear(y=>{ const ny=y+1; try{localStorage.setItem('gt_carga_year',String(ny))}catch{}; return ny }); try{localStorage.setItem('gt_carga_month','0')}catch{} } else { const nm=viewMonth+1; setViewMonth(nm); try{localStorage.setItem('gt_carga_month',String(nm))}catch{} } }
+  const prevMonth = () => { if (viewMonth===0){setViewMonth(11);setViewYear(y=>y-1)}else setViewMonth(m=>m-1) }
+  const nextMonth = () => { if (viewMonth===11){setViewMonth(0);setViewYear(y=>y+1)}else setViewMonth(m=>m+1) }
 
   function barColor(totalMin: number): string {
-    if (totalMin > 480) return 'bg-red-400'       // >8h rojo
-    if (totalMin > 420) return 'bg-orange-400'    // >7h naranja
-    if (totalMin > 360) return 'bg-yellow-300'    // >6h amarillo
+    if (totalMin > 480) return 'bg-red-400'
+    if (totalMin > 420) return 'bg-orange-400'
+    if (totalMin > 360) return 'bg-yellow-300'
     return 'bg-gray-200'
   }
 
@@ -176,13 +177,13 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
             {([['pendientes','Pendientes'],['historial','Historial'],['todo','Todo']] as [ViewMode,string][]).map(([m,l])=>(
-              <button key={m} onClick={()=>{ setViewMode(m); try { localStorage.setItem('gt_carga_mode', m) } catch {} }}
+              <button key={m} onClick={()=>setViewMode(m)}
                 className={`text-xs px-3 py-1.5 rounded-md font-medium transition ${viewMode===m?'bg-white text-gray-900 shadow-sm':'text-gray-500 hover:text-gray-700'}`}>
                 {l}
               </button>
             ))}
           </div>
-          <button onClick={()=>setSoloLaborables(v=>{ const next = !v; try { localStorage.setItem('gt_carga_laborables', String(next)) } catch {}; return next })}
+          <button onClick={()=>setSoloLaborables(v=>!v)}
             className={`text-xs px-3 py-1.5 rounded-lg border transition font-medium ${soloLaborables?'bg-gray-900 text-white border-gray-900':'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
             {soloLaborables?'Solo laborables':'Todos los días'}
           </button>
@@ -193,18 +194,18 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label:'Tiempo total', val:minToHM(totalPendiente), sub:`${tareas.length} tareas` },
-          { label:'Con deadline', val:minToHM(totalConDeadline), sub:`${tareas.filter(t=>!!t.deadline).length} tareas` },
-          { label:'Sin deadline', val:sinDeadline.length.toString(), sub:minToHM(sinDeadline.reduce((s,t)=>s+(t.tiempo_estimado||0),0)) },
+          { label:'Tiempo total', val:minToHM(totalPendiente), sub:`${tareas.length} tareas`, alert:false },
+          { label:'Con deadline', val:minToHM(totalConDeadline), sub:`${tareas.filter(t=>!!t.deadline).length} tareas`, alert:false },
+          { label:'Sin deadline', val:sinDeadline.length.toString(), sub:minToHM(sinDeadline.reduce((s,t)=>s+(t.tiempo_estimado||0),0)), alert:false },
           {
-            label: totalFichadoMes>0 ? `Ocupación (${minToHM(totalFichadoMes)} fichados)` : 'Días sobrecargados',
-            val: totalFichadoMes>0 ? `${pctOcupacion}%` : diasSobrecargados.toString(),
-            sub: totalFichadoMes>0 ? `${minToHM(totalPendiente)} / ${minToHM(totalFichadoMes)}` : `días sobrecargados`,
-            alert: totalFichadoMes>0 ? (pctOcupacion||0)>90 : diasSobrecargados>0
+            label: 'Deuda retrasada',
+            val: minToHM(retrasadasTotalMin),
+            sub: `${retrasadas.length} tareas retrasadas`,
+            alert: retrasadas.length > 0
           },
         ].map((s,i)=>(
-          <div key={i} className={`border rounded-xl p-5 ${(s as any).alert?'border-red-100 bg-red-50':'border-gray-100'}`}>
-            <div className={`text-2xl font-bold mb-1 ${(s as any).alert?'text-red-500':'text-gray-900'}`}>{s.val}</div>
+          <div key={i} className={`border rounded-xl p-5 ${s.alert?'border-violet-200 bg-violet-50':'border-gray-100'}`}>
+            <div className={`text-2xl font-bold mb-1 ${s.alert?'text-violet-600':'text-gray-900'}`}>{s.val}</div>
             <div className="text-sm font-semibold text-gray-700 mb-0.5">{s.label}</div>
             <div className="text-xs text-gray-400">{s.sub}</div>
           </div>
@@ -220,6 +221,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-yellow-300 inline-block"></span>&gt;6h</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-400 inline-block"></span>&gt;7h</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-400 inline-block"></span>&gt;8h</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-violet-400 inline-block"></span>Retrasadas</span>
           </div>
         </div>
 
@@ -228,28 +230,35 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
             const key = dateKey(d)
             const dayTareas = byDay[key] || []
             const totalMin = dayTareas.reduce((s,t)=>s+(t.tiempo_estimado||0),0)
+            const isHoy = key === todayStr
+            const dayRetrasadasMin = isHoy ? retrasadasTotalMin : 0
             const fichadoMin = jornadas[key] || 0
             const pct = maxMin>0?(totalMin/maxMin)*100:0
+            const retPct = maxMin>0?(dayRetrasadasMin/maxMin)*100:0
             const jornadaPct = maxMin>0?(480/maxMin)*100:100
-            const isToday = key===todayStr
-            const isPast = key<todayStr && !isToday
+            const isPast = key<todayStr && !isHoy
             const isExpanded = expandedDay===key
             const color = barColor(totalMin)
             const textColor = barTextColor(totalMin)
             const pctOcDia = fichadoMin>0?Math.round((totalMin/fichadoMin)*100):null
 
             return (
-              <div key={key} className={`${isToday?'bg-blue-50/40':isPast?'bg-gray-50/30':'bg-white'}`}>
+              <div key={key} className={`${isHoy?'bg-blue-50/40':isPast?'bg-gray-50/30':'bg-white'}`}>
                 <div className="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-gray-50/50 transition"
                   onClick={()=>setExpandedDay(isExpanded?null:key)}>
 
                   <div className="w-32 flex-shrink-0">
-                    <div className={`text-sm font-semibold ${isToday?'text-blue-600':isPast?'text-gray-300':d.getDay()===0||d.getDay()===6?'text-gray-400':'text-gray-700'}`}>
+                    <div className={`text-sm font-semibold ${isHoy?'text-blue-600':isPast?'text-gray-300':d.getDay()===0||d.getDay()===6?'text-gray-400':'text-gray-700'}`}>
                       {DAY_NAMES[d.getDay()]} {d.getDate()}
-                      {isToday&&<span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">HOY</span>}
+                      {isHoy&&<span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">HOY</span>}
                     </div>
                     <div className={`text-xs mt-0.5 font-medium ${textColor}`}>
-                      {totalMin>0?minToHM(totalMin):<span className="text-gray-200">—</span>}
+                      {totalMin>0||dayRetrasadasMin>0 ? (
+                        <>
+                          {minToHM(totalMin)}
+                          {dayRetrasadasMin>0&&<span className="text-violet-500 ml-1">+{minToHM(dayRetrasadasMin)} retr.</span>}
+                        </>
+                      ) : <span className="text-gray-200">—</span>}
                       {pctOcDia!==null&&<span className="ml-1.5 text-gray-400 font-normal">({pctOcDia}%)</span>}
                     </div>
                   </div>
@@ -257,6 +266,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                   <div className="flex-1 relative h-6 bg-gray-50 rounded-lg overflow-hidden">
                     <div className="absolute top-0 bottom-0 w-px bg-gray-300 z-10" style={{left:`${Math.min(jornadaPct,99)}%`}}></div>
                     {totalMin>0&&<div className={`h-full rounded-lg transition-all ${color}`} style={{width:`${Math.min(pct,100)}%`}}></div>}
+                    {dayRetrasadasMin>0&&<div className="h-full rounded-lg bg-violet-400 absolute top-0" style={{left:`${Math.min(pct,100)}%`,width:`${Math.min(retPct, 100-Math.min(pct,100))}%`}}></div>}
                     {totalMin>480&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-500">+{minToHM(totalMin-480)}</div>}
                   </div>
 
@@ -313,6 +323,28 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                       <span>{dayTareas.filter(t=>t.done||t.estado==='Completada').length} completadas · {dayTareas.filter(t=>t.estado==='Omitida').length} omitidas</span>
                       <span className="font-semibold text-gray-500">{minToHM(totalMin)} total</span>
                     </div>
+                  </div>
+                )}
+
+                {/* Retrasadas expandidas en HOY */}
+                {isExpanded&&isHoy&&retrasadas.length>0&&(
+                  <div className="px-5 pb-3 space-y-1.5 border-t border-violet-100">
+                    <div className="flex items-center gap-2 pt-1 pb-0.5">
+                      <span className="w-2 h-2 rounded-full bg-violet-400"></span>
+                      <span className="text-[10px] font-semibold text-violet-500 uppercase tracking-wider">Retrasadas ({retrasadas.length})</span>
+                      <span className="text-[10px] text-violet-400">{minToHM(retrasadasTotalMin)}</span>
+                    </div>
+                    {retrasadas.sort((a,b)=>(b.tiempo_estimado||0)-(a.tiempo_estimado||0)).map(t=>(
+                      <div key={t.id}
+                        className="flex items-center gap-3 py-1.5 px-3 bg-violet-50 rounded-lg hover:bg-violet-100 cursor-pointer transition group"
+                        onClick={()=>onEditTarea?.(t.id)}>
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
+                        <span className={`text-xs flex-1 truncate font-medium ${TIPO_TEXT[t.tipo]||'text-gray-600'}`} title={t.tarea}>{t.tarea}</span>
+                        <span className="text-[10px] text-violet-400 flex-shrink-0">{t.deadline}</span>
+                        <span className="text-xs text-gray-400 flex-shrink-0">{minToHM(t.tiempo_estimado)}</span>
+                        <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition flex-shrink-0">✏ editar</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
