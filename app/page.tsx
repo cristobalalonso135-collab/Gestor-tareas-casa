@@ -256,31 +256,67 @@ function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPau
         </div>
 
         {(() => {
-          const ritmo = tEstHecho > 0 && cronoMin > 0 ? Math.round((tEstHecho / cronoMin) * 100) : null
-          const ritmoLabel = ritmo === null ? '—' : `${ritmo}%`
-          const ritmoGood = ritmo !== null && ritmo >= 100
+          const tRealDone = filtered.filter((t: any) => t.done || t.estado === 'Completada').reduce((s: number, t: any) => s + (t.tiempo_real || 0), 0)
+          const diff = tRealDone - cronoMin
+          const noData = cronoMin === 0
+          const pctUso = cronoMin > 0 ? Math.round((tRealDone / cronoMin) * 100) : 0
+          const bueno = diff >= 0
           return (
-            <div className={`border rounded-xl p-5 transition ${ritmo === null ? 'border-gray-100' : ritmoGood ? 'border-emerald-100 bg-emerald-50' : 'border-amber-100 bg-amber-50'}`}>
-              <div className={`text-2xl font-bold mb-1 ${ritmo === null ? 'text-gray-900' : ritmoGood ? 'text-emerald-600' : 'text-amber-600'}`}>{ritmoLabel}</div>
-              <div className="text-sm font-semibold text-gray-700 mb-0.5">Ritmo</div>
-              <div className="text-xs text-gray-400">
-                {ritmo === null ? 'Inicia el cronómetro' : ritmoGood ? 'Vas más rápido que lo estimado' : 'Vas más lento que lo estimado'}
+            <div className={`border rounded-xl p-5 transition ${noData ? 'border-gray-100' : bueno ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className={`text-2xl font-bold ${noData ? 'text-gray-300' : bueno ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {noData ? '—' : (diff >= 0 ? '+' : '-') + minToHM(Math.abs(diff))}
+                </span>
+                {!noData && <span className={`text-sm font-semibold ${bueno ? 'text-emerald-400' : 'text-red-300'}`}>{pctUso}%</span>}
               </div>
+              <div className="text-sm font-semibold text-gray-700 mb-1">Rendimiento</div>
+              {noData ? (
+                <div className="text-xs text-gray-400">Inicia el cronómetro</div>
+              ) : (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${bueno ? 'bg-emerald-400' : 'bg-red-400'}`} style={{width:`${Math.min(pctUso, 100)}%`}}></div>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-gray-400">
+                    {`Fichado ${minToHM(cronoMin)} · Trabajado ${minToHM(tRealDone)}`}
+                  </div>
+                </div>
+              )}
             </div>
           )
         })()}
 
-        <div className={`border rounded-xl p-5 transition ${gap >= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
-          <div className={`text-2xl font-bold mb-1 ${gap >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-            {gap >= 0 ? `+${minToHM(gap)}` : `-${minToHM(Math.abs(gap))}`}
-          </div>
-          <div className="text-sm font-semibold text-gray-700 mb-0.5">
-            {gap >= 0 ? '✓ Llegas' : '⚠ No llegas'}
-          </div>
-          <div className="text-xs text-gray-400">
-            {gap >= 0 ? `Te sobran ${minToHM(gap)} sobre lo pendiente` : `Te faltan ${minToHM(Math.abs(gap))} para completar el plan`}
-          </div>
-        </div>
+        {(() => {
+          const restJornada = Math.max(0, previsionMin - cronoMin)
+          const margen = restJornada - tEstPendiente
+          return (
+            <div className={`border rounded-xl p-5 transition ${margen >= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className={`text-2xl font-bold ${margen >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {margen >= 0 ? `+${minToHM(margen)}` : `-${minToHM(Math.abs(margen))}`}
+                </span>
+                <span className={`text-sm font-semibold ${margen >= 0 ? 'text-emerald-400' : 'text-red-300'}`}>
+                  {margen >= 0 ? '✓ Llegas' : '⚠ No llegas'}
+                </span>
+              </div>
+              <div className="text-sm font-semibold text-gray-700 mb-1">Jornada</div>
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-gray-400">
+                  <span>Restante: {minToHM(restJornada)}</span>
+                  <span>Pendiente: {minToHM(tEstPendiente)}</span>
+                </div>
+                <div className="flex items-center gap-0">
+                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden relative">
+                    <div className={`h-full rounded-full transition-all ${margen >= 0 ? 'bg-emerald-400' : 'bg-red-400'}`}
+                      style={{width:`${restJornada > 0 ? Math.min(100, (tEstPendiente / restJornada) * 100) : 100}%`}}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </div>
     </div>
   )
