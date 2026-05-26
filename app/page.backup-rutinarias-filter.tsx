@@ -542,22 +542,15 @@ export default function Home() {
     return tareas.filter(t => {
       const isDone = t.done === true || (t.done as any) === 'true'
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
-      const normalized = { ...t, done: isDone }
-
       if (tab === 'Todas') return !isInactive
       if (tab === 'Completadas') return isInactive
-
       if (tab === 'Plan') {
-        if (!isInactive && isEnPlan(normalized)) return true
+        if (!isInactive && isEnPlan({...t, done: isDone})) return true
         if (isInactive && t.fecha_finalizacion === today && !t.excluir_plan) return true
         return false
       }
-
-      if (tab === 'Rutinaria') {
-        return !isInactive && RUTINARIAS.includes(t.tipo) && !isEnPlan(normalized)
-      }
-
-      return !isInactive && t.tipo === tab && !isEnPlan(normalized)
+      if (tab === 'Rutinaria') { if (isInactive || !RUTINARIAS.includes(t.tipo) || isEnPlan({...t, done: isDone})) return false }
+      return !isInactive && t.tipo === tab && !isEnPlan({...t, done: isDone})
     })
   }
   const tabFiltered = getTabFiltered()
@@ -579,21 +572,16 @@ export default function Home() {
     const result = all.filter(t => {
       const isDone = t.done === true || (t.done as any) === 'true'
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
-      const normalized = { ...t, done: isDone }
 
-      if (tab === 'Todas') {
-        if (isInactive) return false
-      } else if (tab === 'Completadas') {
-        if (!isInactive) return false
-      } else if (tab === 'Plan') {
-        const inPlan = (!isInactive && isEnPlan(normalized)) ||
+      if (tab === 'Todas') { if (isInactive) return false }
+      else if (tab === 'Completadas') { if (!isInactive) return false }
+      else if (tab === 'Plan') {
+        const inPlan = (!isInactive && isEnPlan({...t, done: isDone})) ||
           (isInactive && t.fecha_finalizacion === today && !t.excluir_plan)
         if (!inPlan) return false
-      } else if (tab === 'Rutinaria') {
-        if (isInactive || !RUTINARIAS.includes(t.tipo) || isEnPlan(normalized)) return false
-      } else {
-        if (isInactive || t.tipo !== tab || isEnPlan(normalized)) return false
       }
+      else if (tab === 'Rutinaria') { if (isInactive || !RUTINARIAS.includes(t.tipo) || isEnPlan({...t, done: isDone})) return false }
+      else { if (isInactive || t.tipo !== tab || isEnPlan({...t, done: isDone})) return false }
 
       if (fTarea && !t.tarea.toLowerCase().includes(fTarea.toLowerCase()) && !(t.notas||'').toLowerCase().includes(fTarea.toLowerCase())) return false
       if (fTipo.size > 0 && !fTipo.has(t.tipo)) return false
@@ -604,10 +592,12 @@ export default function Home() {
       return true
     })
 
+    // Helper: inactive check
     const isInact = (t: any) => t.done === true || (t.done as any) === 'true' || t.estado === 'Omitida' || t.estado === 'Completada'
 
     if (sortCol) {
       result.sort((a, b) => {
+        // In Plan, inactive always at bottom
         if (tab === 'Plan') {
           const aI = isInact(a), bI = isInact(b)
           if (aI && !bI) return 1
@@ -630,6 +620,7 @@ export default function Home() {
       return result
     }
 
+    // No sortCol: pure orden, inactive at bottom in Plan
     return result.sort((a, b) => {
       if (tab === 'Plan') {
         const aI = isInact(a), bI = isInact(b)
@@ -651,19 +642,6 @@ export default function Home() {
       setSortCol(col); setSortDir('asc')
     }
   }
-
-  // limpiar filtros al cambiar de pestaña
-  useEffect(() => {
-    setFTarea('')
-    setFTipo(new Set())
-    setFEstado(new Set())
-    setFFechaSol(new Set())
-    setFDeadline(new Set())
-    setFFechaFin(new Set())
-    setSortCol(null)
-    setSortDir('asc')
-  }, [tab])
-
 
   function clearFilters() { setFTarea(''); setFTipo(new Set()); setFEstado(new Set()); setFFechaSol(new Set()); setFDeadline(new Set()); setFFechaFin(new Set()); setSortCol(null) }
 
