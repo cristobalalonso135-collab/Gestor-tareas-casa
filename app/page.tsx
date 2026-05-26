@@ -150,6 +150,7 @@ function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPau
 
   const tEstTotal = filtered.reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
   const tEstHecho = filtered.filter((t: any) => t.done || t.estado === 'Completada').reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
+  const tRealHecho = filtered.filter((t: any) => t.done || t.estado === 'Completada').reduce((s: number, t: any) => s + (t.tiempo_real || 0), 0)
   const tEstPendiente = filtered.filter((t: any) => !t.done && t.estado !== 'Completada' && t.estado !== 'Omitida').reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
   const pctTiempo = tEstTotal > 0 ? Math.round((tEstHecho / tEstTotal) * 100) : 0
 
@@ -195,7 +196,7 @@ function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPau
             <button onClick={()=>setEditingStart(true)}
               className="text-xs font-semibold text-gray-600 border border-dashed border-gray-300 px-2 py-1 rounded hover:bg-white hover:border-gray-400 transition"
               title="Ajustar segun hora de fichaje">
-              â° Ajustar
+              Ajustar
             </button>
           )}
         </div>
