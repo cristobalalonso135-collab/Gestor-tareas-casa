@@ -648,7 +648,12 @@ export default function Home() {
         ? `Esta tarea tiene ${dias} día(s) de retraso. ¿Quieres sacarla del Plan del día igualmente? Seguirá marcada como retrasada.`
         : `Esta tarea tiene deadline hoy. ¿Quieres sacarla del Plan del día?`
       if (!confirm(msg)) return
-      await supabase.from('tareas').update({ excluir_plan: !t.excluir_plan, en_plan: false }).eq('id', t.id)
+      const newExcluir = !t.excluir_plan
+      await supabase.from('tareas').update({
+        excluir_plan: newExcluir,
+        excluida_fecha: newExcluir ? today : null,
+        en_plan: false
+      }).eq('id', t.id)
     } else {
       await supabase.from('tareas').update({ en_plan: !t.en_plan, excluir_plan: false }).eq('id', t.id)
     }
