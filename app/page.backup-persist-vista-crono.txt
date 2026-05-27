@@ -481,7 +481,7 @@ export default function Home() {
   const [importModal, setImportModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [editId, setEditId] = useState<number | null>(null)
-  const [tab, setTab] = useState(() => typeof window !== 'undefined' ? (localStorage.getItem('gestor_tab') || 'Plan') : 'Plan')
+  const [tab, setTab] = useState('Plan')
   const [saving, setSaving] = useState(false)
   const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -534,8 +534,8 @@ export default function Home() {
   const [fragmentDeadlines, setFragmentDeadlines] = useState<string[]>([])
 
   const [previsionMin, setPrevisionMin] = useState(480)
-  const [cronoRunning, setCronoRunning] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('gestor_crono_running') === 'true' : false)
-  const [cronoSeconds, setCronoSeconds] = useState(() => typeof window !== 'undefined' ? parseInt(localStorage.getItem('gestor_crono_seconds') || '0') || 0 : 0)
+  const [cronoRunning, setCronoRunning] = useState(false)
+  const [cronoSeconds, setCronoSeconds] = useState(0)
   const cronoRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cronoStartRef = useRef<number | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -558,33 +558,6 @@ export default function Home() {
   const [colWidths, setColWidths] = useState([90, 130, 340, 110, 120, 60, 60, 60, 130, 80])
   const colResizing = useRef<{ col: number, startX: number, startW: number } | null>(null)
   const today = new Date().toISOString().split('T')[0]
-
-  useEffect(() => {
-    localStorage.setItem('gestor_tab', tab)
-  }, [tab])
-
-  useEffect(() => {
-    const running = localStorage.getItem('gestor_crono_running') === 'true'
-    const startedAt = parseInt(localStorage.getItem('gestor_crono_started_at') || '0') || 0
-    const storedSeconds = parseInt(localStorage.getItem('gestor_crono_seconds') || '0') || 0
-
-    if (running && startedAt > 0) {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
-      const total = Math.max(0, storedSeconds + elapsed)
-
-      setCronoSeconds(total)
-      cronoStartRef.current = Date.now() - total * 1000
-
-      if (cronoRef.current) clearInterval(cronoRef.current)
-      cronoRef.current = setInterval(() => {
-        const next = Math.floor((Date.now() - cronoStartRef.current!) / 1000)
-        setCronoSeconds(next)
-        localStorage.setItem('gestor_crono_seconds_live', String(next))
-      }, 1000)
-
-      setCronoRunning(true)
-    }
-  }, [])
 
   useEffect(() => {
     async function init() {
@@ -612,10 +585,6 @@ export default function Home() {
     window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
-
-  useEffect(() => {
-    localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-  }, [cronoSeconds])
 
   useEffect(() => {
     if (!fragmentModal) return
@@ -1009,19 +978,10 @@ export default function Home() {
 
   function startCrono() {
     if (cronoRunning) return
-
     cronoStartRef.current = Date.now() - cronoSeconds * 1000
-
-    localStorage.setItem('gestor_crono_running', 'true')
-    localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-    localStorage.setItem('gestor_crono_started_at', String(Date.now()))
-
     cronoRef.current = setInterval(() => {
-      const next = Math.floor((Date.now() - cronoStartRef.current!) / 1000)
-      setCronoSeconds(next)
-      localStorage.setItem('gestor_crono_seconds', String(next))
+      setCronoSeconds(Math.floor((Date.now() - cronoStartRef.current!) / 1000))
     }, 1000)
-
     setCronoRunning(true)
   }
 
@@ -1035,33 +995,20 @@ export default function Home() {
     startDate.setHours(h, m, 0, 0)
     const elapsedSecs = Math.max(0, Math.floor((now.getTime() - startDate.getTime()) / 1000))
     setCronoSeconds(elapsedSecs)
-    localStorage.setItem('gestor_crono_seconds', String(elapsedSecs))
     if (cronoRunning) {
       // Re-anchor running timer
       cronoStartRef.current = Date.now() - elapsedSecs * 1000
-      localStorage.setItem('gestor_crono_running', 'true')
-      localStorage.setItem('gestor_crono_started_at', String(Date.now() - elapsedSecs * 1000))
     }
   }
 
   function pauseCrono() {
     if (cronoRef.current) clearInterval(cronoRef.current)
-
-    localStorage.setItem('gestor_crono_running', 'false')
-    localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-    localStorage.removeItem('gestor_crono_started_at')
-
     setCronoRunning(false)
     saveCronoToday(Math.floor(cronoSeconds / 60))
   }
 
   function resetCrono() {
     if (cronoRef.current) clearInterval(cronoRef.current)
-
-    localStorage.setItem('gestor_crono_running', 'false')
-    localStorage.setItem('gestor_crono_seconds', '0')
-    localStorage.removeItem('gestor_crono_started_at')
-
     setCronoRunning(false)
     setCronoSeconds(0)
     cronoStartRef.current = null
