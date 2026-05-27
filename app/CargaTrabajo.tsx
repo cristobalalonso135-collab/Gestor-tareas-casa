@@ -118,14 +118,11 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     byDay[t.deadline].push(t)
   })
 
-  // Retrasadas: tareas activas con deadline pasado
   const retrasadas = allTareas.filter(t => t.deadline && t.deadline < todayStr && !t.done && t.estado !== 'Omitida' && t.estado !== 'Completada')
   const retrasadasTotalMin = retrasadas.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
 
   const maxMin = Math.max(480, ...workdays.map(d => {
-    const dayMin = (byDay[dateKey(d)] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-    const extra = dateKey(d) === todayStr ? retrasadasTotalMin : 0
-    return dayMin + extra
+    return (byDay[dateKey(d)] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
   }))
 
   const sinDeadline = tareas.filter(t => !t.deadline)
@@ -221,7 +218,6 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-yellow-300 inline-block"></span>&gt;6h</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-400 inline-block"></span>&gt;7h</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-400 inline-block"></span>&gt;8h</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-violet-400 inline-block"></span>Retrasadas</span>
           </div>
         </div>
 
@@ -231,10 +227,8 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
             const dayTareas = byDay[key] || []
             const totalMin = dayTareas.reduce((s,t)=>s+(t.tiempo_estimado||0),0)
             const isHoy = key === todayStr
-            const dayRetrasadasMin = isHoy ? retrasadasTotalMin : 0
             const fichadoMin = jornadas[key] || 0
             const pct = maxMin>0?(totalMin/maxMin)*100:0
-            const retPct = maxMin>0?(dayRetrasadasMin/maxMin)*100:0
             const jornadaPct = maxMin>0?(480/maxMin)*100:100
             const isPast = key<todayStr && !isHoy
             const isExpanded = expandedDay===key
@@ -253,12 +247,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                       {isHoy&&<span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">HOY</span>}
                     </div>
                     <div className={`text-xs mt-0.5 font-medium ${textColor}`}>
-                      {totalMin>0||dayRetrasadasMin>0 ? (
-                        <>
-                          {minToHM(totalMin)}
-                          {dayRetrasadasMin>0&&<span className="text-violet-500 ml-1">+{minToHM(dayRetrasadasMin)} retr.</span>}
-                        </>
-                      ) : <span className="text-gray-200">—</span>}
+                      {totalMin>0?minToHM(totalMin):<span className="text-gray-200">—</span>}
                       {pctOcDia!==null&&<span className="ml-1.5 text-gray-400 font-normal">({pctOcDia}%)</span>}
                     </div>
                   </div>
@@ -266,7 +255,6 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                   <div className="flex-1 relative h-6 bg-gray-50 rounded-lg overflow-hidden">
                     <div className="absolute top-0 bottom-0 w-px bg-gray-300 z-10" style={{left:`${Math.min(jornadaPct,99)}%`}}></div>
                     {totalMin>0&&<div className={`h-full rounded-lg transition-all ${color}`} style={{width:`${Math.min(pct,100)}%`}}></div>}
-                    {dayRetrasadasMin>0&&<div className="h-full rounded-lg bg-violet-400 absolute top-0" style={{left:`${Math.min(pct,100)}%`,width:`${Math.min(retPct, 100-Math.min(pct,100))}%`}}></div>}
                     {totalMin>480&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-500">+{minToHM(totalMin-480)}</div>}
                   </div>
 
@@ -290,8 +278,8 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                   </div>
 
                   <div className="w-20 flex-shrink-0 flex items-center justify-end gap-2">
-                    {dayTareas.length>0&&<span className="text-xs text-gray-400">{dayTareas.length} tarea{dayTareas.length!==1?'s':''}</span>}
-                    {dayTareas.length>0&&(
+                    {(dayTareas.length>0||(isHoy&&retrasadas.length>0))&&<span className="text-xs text-gray-400">{dayTareas.length+(isHoy?retrasadas.length:0)} tarea{(dayTareas.length+(isHoy?retrasadas.length:0))!==1?'s':''}</span>}
+                    {(dayTareas.length>0||(isHoy&&retrasadas.length>0))&&(
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
                         className={`text-gray-300 transition-transform ${isExpanded?'rotate-180':''}`}>
                         <path d="M6 9l6 6 6-6"/>
@@ -300,8 +288,9 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                   </div>
                 </div>
 
-                {isExpanded&&dayTareas.length>0&&(
+                {isExpanded&&(dayTareas.length>0||(isHoy&&retrasadas.length>0))&&(
                   <div className="px-5 pb-3 space-y-1.5 border-t border-gray-50">
+                    {/* Tareas del día */}
                     {dayTareas.sort((a,b)=>(b.tiempo_estimado||0)-(a.tiempo_estimado||0)).map(t=>(
                       <div key={t.id}
                         className="flex items-center gap-3 py-1.5 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition group"
@@ -319,32 +308,33 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                         }`}>{t.estado}</span>
                       </div>
                     ))}
+
+                    {/* Retrasadas solo en HOY */}
+                    {isHoy&&retrasadas.length>0&&(
+                      <>
+                        <div className="flex items-center gap-2 pt-2 pb-0.5">
+                          <div className="flex-1 h-px bg-violet-100"></div>
+                          <span className="text-[10px] font-semibold text-violet-500 uppercase tracking-wider">Retrasadas ({retrasadas.length}) · {minToHM(retrasadasTotalMin)}</span>
+                          <div className="flex-1 h-px bg-violet-100"></div>
+                        </div>
+                        {retrasadas.sort((a,b)=>(b.tiempo_estimado||0)-(a.tiempo_estimado||0)).map(t=>(
+                          <div key={`ret-${t.id}`}
+                            className="flex items-center gap-3 py-1.5 px-3 bg-violet-50/50 rounded-lg hover:bg-violet-100/50 cursor-pointer transition group"
+                            onClick={()=>onEditTarea?.(t.id)}>
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
+                            <span className={`text-xs flex-1 truncate font-medium ${TIPO_TEXT[t.tipo]||'text-gray-600'}`} title={t.tarea}>{t.tarea}</span>
+                            <span className="text-[10px] text-violet-400 flex-shrink-0">{t.deadline}</span>
+                            <span className="text-xs text-gray-400 flex-shrink-0">{minToHM(t.tiempo_estimado)}</span>
+                            <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition flex-shrink-0">✏ editar</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
                     <div className="flex justify-between pt-1 text-xs text-gray-400">
                       <span>{dayTareas.filter(t=>t.done||t.estado==='Completada').length} completadas · {dayTareas.filter(t=>t.estado==='Omitida').length} omitidas</span>
                       <span className="font-semibold text-gray-500">{minToHM(totalMin)} total</span>
                     </div>
-                  </div>
-                )}
-
-                {/* Retrasadas expandidas en HOY */}
-                {isExpanded&&isHoy&&retrasadas.length>0&&(
-                  <div className="px-5 pb-3 space-y-1.5 border-t border-violet-100">
-                    <div className="flex items-center gap-2 pt-1 pb-0.5">
-                      <span className="w-2 h-2 rounded-full bg-violet-400"></span>
-                      <span className="text-[10px] font-semibold text-violet-500 uppercase tracking-wider">Retrasadas ({retrasadas.length})</span>
-                      <span className="text-[10px] text-violet-400">{minToHM(retrasadasTotalMin)}</span>
-                    </div>
-                    {retrasadas.sort((a,b)=>(b.tiempo_estimado||0)-(a.tiempo_estimado||0)).map(t=>(
-                      <div key={t.id}
-                        className="flex items-center gap-3 py-1.5 px-3 bg-violet-50 rounded-lg hover:bg-violet-100 cursor-pointer transition group"
-                        onClick={()=>onEditTarea?.(t.id)}>
-                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
-                        <span className={`text-xs flex-1 truncate font-medium ${TIPO_TEXT[t.tipo]||'text-gray-600'}`} title={t.tarea}>{t.tarea}</span>
-                        <span className="text-[10px] text-violet-400 flex-shrink-0">{t.deadline}</span>
-                        <span className="text-xs text-gray-400 flex-shrink-0">{minToHM(t.tiempo_estimado)}</span>
-                        <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition flex-shrink-0">✏ editar</span>
-                      </div>
-                    ))}
                   </div>
                 )}
               </div>

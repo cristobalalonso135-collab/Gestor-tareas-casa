@@ -22,12 +22,6 @@ type Tarea = {
   en_plan: boolean
   hora_finalizacion?: string
   excluir_plan?: boolean
-  excluida_fecha?: string | null
-  parent_id?: number | null
-  fragmento_num?: number | null
-  fragmentos_total?: number | null
-  es_fragmento?: boolean
-  es_padre?: boolean
 }
 
 const TIPOS_FORM = ['Operativa', 'Táctica', 'Estratégica']
@@ -491,48 +485,6 @@ export default function Home() {
   const [tiempoRealModal, setTiempoRealModal] = useState<{tarea: Tarea, action: 'complete'|'omit'} | null>(null)
   const [tiempoRealInput, setTiempoRealInput] = useState('')
 
-  const [fragmentModal, setFragmentModal] = useState<Tarea | null>(null)
-  const [fragmentSize, setFragmentSize] = useState(120)
-  const [fragmentParts, setFragmentParts] = useState<{ minutes: number, deadline: string }[]>([])
-
-  function buildFragmentParts(t: Tarea, size: number) {
-    const total = t.tiempo_estimado || 0
-    const safeSize = Math.max(1, size || 120)
-    const parts = Math.max(1, Math.ceil(total / safeSize))
-
-    return Array.from({ length: parts }, (_, i) => {
-      const remaining = total - (i * safeSize)
-
-      return {
-        minutes: Math.min(safeSize, Math.max(0, remaining)),
-        deadline: t.deadline || today
-      }
-    })
-  }
-
-  function openFragmentModal(t: Tarea) {
-    const size = Math.min(120, Math.max(1, t.tiempo_estimado || 120))
-    setFragmentSize(size)
-    setFragmentParts(buildFragmentParts(t, size))
-    setFragmentModal(t)
-  }
-
-  function updateFragmentSize(value: number) {
-    const safe = Math.max(1, value || 120)
-    setFragmentSize(safe)
-
-    if (fragmentModal) {
-      setFragmentParts(buildFragmentParts(fragmentModal, safe))
-    }
-  }
-
-  function updateFragmentPart(index: number, patch: Partial<{ minutes: number, deadline: string }>) {
-    setFragmentParts(prev => prev.map((part, i) => i === index ? { ...part, ...patch } : part))
-  }
-
-  const fragmentPartsTotal = fragmentParts.reduce((sum, part) => sum + (part.minutes || 0), 0)
-  const [fragmentDeadlines, setFragmentDeadlines] = useState<string[]>([])
-
   const [previsionMin, setPrevisionMin] = useState(480)
   const [cronoRunning, setCronoRunning] = useState(false)
   const [cronoSeconds, setCronoSeconds] = useState(0)
@@ -583,17 +535,6 @@ export default function Home() {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
 
-  useEffect(() => {
-    if (!fragmentModal) return
-    const size = Math.max(1, fragmentSize || 120)
-    const total = Math.max(0, fragmentModal.tiempo_estimado || 0)
-    const parts = Math.max(1, Math.ceil(total / size))
-
-    setFragmentDeadlines(prev =>
-      Array.from({ length: parts }, (_, i) => prev[i] || fragmentModal.deadline || today)
-    )
-  }, [fragmentModal, fragmentSize, today])
-
   async function fetchTareas() {
     setLoading(true)
     const { data } = await supabase.from('tareas').select('*').order('orden', { ascending: true }).order('id', { ascending: false })
@@ -607,8 +548,6 @@ export default function Home() {
     return tareas.filter(t => {
       const isDone = t.done === true || (t.done as any) === 'true'
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
-      const isParent = (t as any).es_padre === true
-      if (isParent) return false
       const normalized = { ...t, done: isDone }
 
       if (tab === 'Todas') return !isInactive
@@ -636,7 +575,7 @@ export default function Home() {
 
   function isEnPlan(t: Tarea): boolean {
     const isDone = t.done === true || (t.done as any) === 'true'
-    if (isDone || t.estado === 'Omitida' || t.estado === 'Completada' || (t as any).es_padre === true) return false
+    if (isDone || t.estado === 'Omitida' || t.estado === 'Completada') return false
 
     const excluidaHoy = !!t.excluir_plan && (t as any).excluida_fecha === today
     if (excluidaHoy) return false
@@ -649,8 +588,6 @@ export default function Home() {
     const result = all.filter(t => {
       const isDone = t.done === true || (t.done as any) === 'true'
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
-      const isParent = (t as any).es_padre === true
-      if (isParent) return false
       const normalized = { ...t, done: isDone }
 
       if (tab === 'Todas') {
@@ -739,21 +676,19 @@ export default function Home() {
 
   function clearFilters() { setFTarea(''); setFTipo(new Set()); setFEstado(new Set()); setFFechaSol(new Set()); setFDeadline(new Set()); setFFechaFin(new Set()); setSortCol(null) }
 
-  const tareasNoPadre = tareas.filter(t => (t as any).es_padre !== true)
-
   const stats = {
-    activas: tareasNoPadre.filter(t => t.done !== true && (t.done as any) !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').length,
-    plan: tareasNoPadre.filter(t => isEnPlan(t)).length,
-    completadas: tareasNoPadre.filter(t => t.done === true || (t.done as any) === 'true' || t.estado === 'Omitida' || t.estado === 'Completada').length,
-    minutos: tareasNoPadre.filter(t => t.done !== true && (t.done as any) !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').reduce((s, t) => s + (t.tiempo_estimado||0), 0),
+    activas: tareas.filter(t => t.done !== true && (t.done as any) !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').length,
+    plan: tareas.filter(t => isEnPlan(t)).length,
+    completadas: tareas.filter(t => t.done === true || (t.done as any) === 'true' || t.estado === 'Omitida' || t.estado === 'Completada').length,
+    minutos: tareas.filter(t => t.done !== true && (t.done as any) !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').reduce((s, t) => s + (t.tiempo_estimado||0), 0),
   }
 
   const tabCount = (key: string) => {
     if (key==='Todas') return stats.activas
     if (key==='Plan') return stats.plan
     if (key==='Completadas') return stats.completadas
-    if (key==='Rutinaria') return tareasNoPadre.filter(x => RUTINARIAS.includes(x.tipo) && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
-    return tareasNoPadre.filter(x => x.tipo===key && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
+    if (key==='Rutinaria') return tareas.filter(x => RUTINARIAS.includes(x.tipo) && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
+    return tareas.filter(x => x.tipo===key && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
   }
 
   function onDragStart(idx: number) { dragIdx.current = idx; setDragging(idx) }
@@ -888,90 +823,6 @@ export default function Home() {
     })
     fetchTareas()
   }
-
-  function openFragmentar(t: Tarea) {
-    if (!t.tiempo_estimado || t.tiempo_estimado <= 0) {
-      alert('Esta tarea no tiene tiempo estimado. Añade un tiempo estimado antes de fragmentarla.')
-      return
-    }
-    setFragmentSize(Math.min(120, Math.max(1, t.tiempo_estimado || 120)))
-    openFragmentModal(t)
-  }
-
-  async function fragmentTask(t: Tarea) {
-    const partsConfig = fragmentParts
-      .map(part => ({
-        minutes: Math.max(0, Math.round(part.minutes || 0)),
-        deadline: part.deadline || t.deadline || today
-      }))
-      .filter(part => part.minutes > 0)
-
-    if (partsConfig.length === 0) {
-      alert('Necesitas al menos una parte con minutos.')
-      return
-    }
-
-    const totalOriginal = t.tiempo_estimado || 0
-    const totalParts = partsConfig.reduce((sum, part) => sum + part.minutes, 0)
-
-    if (totalOriginal > 0 && totalParts !== totalOriginal) {
-      const ok = confirm(`Las partes suman ${totalParts}m, pero la tarea original tenía ${totalOriginal}m. ¿Quieres continuar igualmente?`)
-      if (!ok) return
-    }
-
-    const maxOrden = tareas.length > 0 ? Math.max(...tareas.map(x => x.orden || 0)) : 0
-    const parts = partsConfig.length
-
-    const inserts = partsConfig.map((part, i) => ({
-      tipo: t.tipo,
-      tarea: `${t.tarea} · parte ${i + 1}/${parts}`,
-      notas: t.notas || null,
-      solicitado_por: t.solicitado_por,
-      prioridad: t.prioridad,
-      estado: 'Pendiente',
-      tiempo_estimado: part.minutes,
-      tiempo_real: 0,
-      fecha_solicitud: t.fecha_solicitud || today,
-      deadline: part.deadline,
-      fecha_finalizacion: null,
-      hora_finalizacion: null,
-      done: false,
-      en_plan: false,
-      excluir_plan: false,
-      orden: maxOrden + i + 1,
-      parent_id: t.id,
-      fragmento_num: i + 1,
-      fragmentos_total: parts,
-      es_fragmento: true,
-      es_padre: false
-    }))
-
-    const { error: insertError } = await supabase.from('tareas').insert(inserts)
-
-    if (insertError) {
-      alert(`Error al crear fragmentos: ${insertError.message}`)
-      return
-    }
-
-    const { error: updateError } = await supabase
-      .from('tareas')
-      .update({
-        es_padre: true,
-        estado: 'En espera',
-        en_plan: false,
-        excluir_plan: true
-      })
-      .eq('id', t.id)
-
-    if (updateError) {
-      alert(`Fragmentos creados, pero no pude actualizar la tarea padre: ${updateError.message}`)
-    }
-
-    setFragmentModal(null)
-    setFragmentParts([])
-    fetchTareas()
-  }
-
 
   function startCrono() {
     if (cronoRunning) return
@@ -1197,20 +1048,6 @@ export default function Home() {
         .gestor-table .items-start {
           align-items: center;
         }
-
-        .divide-task-btn {
-          color: #d1d5db;
-        }
-
-        .divide-task-btn:hover {
-          color: #7c3aed;
-          background-color: #f5f3ff;
-        }
-
-        .divide-task-btn svg {
-          stroke: currentColor;
-          transition: color 150ms ease, stroke 150ms ease;
-        }
       `}</style>
 
       <div className="border-b border-gray-100 bg-white sticky top-0 z-10">
@@ -1432,7 +1269,7 @@ export default function Home() {
                             {isRetrasada && (
                               <div className="flex items-center gap-1">
                                 <span className="text-[9px] font-bold bg-red-100 text-red-500 px-2 py-0.5 rounded-full">+{retraso}d</span>
-                                
+                                {excluido &&}
                               </div>
                             )}
                             {isHoy && <span className="text-[9px] font-bold bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">hoy</span>}
@@ -1464,15 +1301,6 @@ export default function Home() {
                         <button onClick={()=>duplicateTask(t)} title="Duplicar" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                         </button>
-                        <button onClick={()=>openFragmentar(t)} title="Dividir tarea" className="divide-task-btn w-7 h-7 flex items-center justify-center rounded-lg hover:bg-violet-50 transition">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="3" y="5" width="18" height="14" rx="2"/>
-                            <path d="M12 5v14"/>
-                            <path d="M8 9l-2 3 2 3"/>
-                            <path d="M16 9l2 3-2 3"/>
-                          </svg>
-                        </button>
-
                         <button onClick={()=>openEdit(t)} title="Editar" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
@@ -1609,133 +1437,6 @@ export default function Home() {
                   </button>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {fragmentModal && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl w-full max-w-xl border border-gray-100 shadow-2xl overflow-hidden">
-            <div className="px-7 py-5 border-b border-gray-100 flex items-start justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">Dividir tarea</h2>
-                <p className="text-xs text-gray-400 mt-1 line-clamp-1">{fragmentModal.tarea}</p>
-              </div>
-              <button onClick={() => { setFragmentModal(null); setFragmentParts([]) }} className="text-gray-300 hover:text-gray-500 transition">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-
-            <div className="p-7 space-y-5">
-              <div className="grid grid-cols-2 gap-5">
-                <Field label="Tiempo total">
-                  <input
-                    value={`${fragmentModal.tiempo_estimado || 0}m`}
-                    disabled
-                    className="w-full border border-gray-100 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-500"
-                  />
-                </Field>
-
-                <Field label="Máximo por parte">
-                  <input
-                    type="number"
-                    value={fragmentSize}
-                    onChange={e => updateFragmentSize(parseInt(e.target.value) || 120)}
-                    className={inputCls()}
-                  />
-                </Field>
-              </div>
-
-              <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-bold text-violet-700">
-                    Se crearán {fragmentParts.length} parte{fragmentParts.length === 1 ? '' : 's'}
-                  </div>
-                  <div className={`text-xs mt-0.5 ${fragmentPartsTotal === (fragmentModal.tiempo_estimado || 0) ? 'text-violet-500' : 'text-red-400'}`}>
-                    Suma partes: {minToHM(fragmentPartsTotal)} / {minToHM(fragmentModal.tiempo_estimado || 0)}
-                  </div>
-                </div>
-                <div className="w-8 h-8 rounded-lg bg-white/70 text-violet-500 flex items-center justify-center">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 7h6"/>
-                    <path d="M14 7h6"/>
-                    <path d="M4 17h6"/>
-                    <path d="M14 17h6"/>
-                    <path d="M10 7l4 10"/>
-                    <path d="M14 7l-4 10"/>
-                  </svg>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Partes y deadlines</div>
-                <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                  {fragmentParts.map((part, i) => (
-                    <div key={i} className="border border-gray-100 rounded-xl p-3">
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-gray-700">Parte {i + 1}/{fragmentParts.length}</div>
-                          <div className="text-xs text-gray-400 truncate">
-                            {fragmentModal.tarea} · parte {i + 1}/{fragmentParts.length}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setFragmentParts(prev => prev.filter((_, idx) => idx !== i))}
-                          className="text-gray-300 hover:text-red-400 transition"
-                          title="Quitar parte"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <Field label="Minutos">
-                          <input
-                            type="number"
-                            value={part.minutes}
-                            onChange={e => updateFragmentPart(i, { minutes: parseInt(e.target.value) || 0 })}
-                            className={inputCls()}
-                          />
-                        </Field>
-
-                        <Field label="Deadline">
-                          <input
-                            type="date"
-                            value={part.deadline}
-                            onChange={e => updateFragmentPart(i, { deadline: e.target.value })}
-                            className={inputCls()}
-                          />
-                        </Field>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <button
-                  onClick={() => setFragmentParts(prev => [...prev, { minutes: Math.max(1, fragmentSize || 120), deadline: fragmentModal.deadline || today }])}
-                  className="mt-3 w-full border border-dashed border-gray-200 rounded-xl py-2 text-xs font-semibold text-gray-400 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 transition"
-                >
-                  + Añadir parte
-                </button>
-              </div>
-            </div>
-
-            <div className="px-7 py-5 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-2">
-              <button
-                onClick={() => { setFragmentModal(null); setFragmentParts([]) }}
-                className="px-4 py-2 border border-gray-200 bg-white rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300 transition"
-              >
-                Cancelar
-              </button>
-
-              <button
-                onClick={() => fragmentTask(fragmentModal)}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-700 transition disabled:opacity-40"
-                disabled={fragmentParts.length === 0}
-              >
-                Dividir tarea
-              </button>
             </div>
           </div>
         </div>
