@@ -15,6 +15,7 @@ type Tarea = {
   tiempo_real: number
   fecha_solicitud: string
   deadline: string
+  fecha_planificada?: string | null
   fecha_finalizacion: string
   done: boolean
   solicitado_por: string
@@ -31,7 +32,7 @@ type Tarea = {
 }
 
 const TIPOS_FORM = ['Operativa', 'Táctica', 'Estratégica']
-const TIPOS_ALL  = ['Diaria', 'Semanal', 'Mensual', 'Operativa', 'Táctica', 'Estratégica', 'Casa']
+const TIPOS_ALL  = ['Diaria', 'Semanal', 'Mensual', 'Operativa', 'Táctica', 'Estratégica']
 const RUTINARIAS = ['Diaria', 'Semanal', 'Mensual']
 const ESTADOS    = ['Pendiente', 'En espera', 'En progreso', 'Completada', 'Omitida']
 const PRIORIDADES = ['Alta', 'Media', 'Baja']
@@ -43,14 +44,13 @@ const TABS = [
   { key: 'Operativa',   label: 'Operativas',   emoji: '⚡', sub: '≤30 min' },
   { key: 'Táctica',     label: 'Tácticas',     emoji: '🎯', sub: '≤120 min' },
   { key: 'Estratégica', label: 'Estratégicas', emoji: '🔭', sub: '>120 min' },
-  { key: 'Casa',        label: 'Casa',         emoji: '🏠', sub: '' },
   { key: 'Completadas', label: 'Historial',    emoji: '📁', sub: '' },
   { key: 'Carga',       label: 'Carga de trabajo', emoji: '📊', sub: '' },
 ]
 
 const empty: Omit<Tarea, 'id'> = {
   tipo: 'Operativa', tarea: '', notas: '', prioridad: 'Media', estado: 'Pendiente',
-  tiempo_estimado: 0, tiempo_real: 0, fecha_solicitud: '', deadline: '',
+  tiempo_estimado: 0, tiempo_real: 0, fecha_solicitud: '', deadline: '', fecha_planificada: '',
   fecha_finalizacion: '', done: false, solicitado_por: '', orden: 0, en_plan: false
 }
 
@@ -58,7 +58,6 @@ const TIPO_COLORS: Record<string, { bg: string, text: string, dot: string }> = {
   Operativa:   { bg: 'bg-sky-50',     text: 'text-sky-700',     dot: 'bg-sky-400' },
   Táctica:     { bg: 'bg-violet-50',  text: 'text-violet-700',  dot: 'bg-violet-400' },
   Estratégica: { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400' },
-  Casa:        { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-400' },
   Diaria:      { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-400' },
   Semanal:     { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-500' },
   Mensual:     { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-600' },
@@ -73,7 +72,7 @@ const ESTADO_COLORS: Record<string, { bg: string, text: string }> = {
 }
 
 const MASTER_COLS = [
-  { key: 'tipo',            label: 'tipo *',            hint: 'Diaria / Semanal / Mensual / Operativa / Táctica / Estratégica / Casa' },
+  { key: 'tipo',            label: 'tipo *',            hint: 'Diaria / Semanal / Mensual / Operativa / Táctica / Estratégica' },
   { key: 'tarea',           label: 'tarea *',           hint: 'Texto libre con fecha al final. Ej: Fichar entrada 01/06/2026' },
   { key: 'notas',           label: 'notas',             hint: 'Texto libre' },
   { key: 'solicitado_por',  label: 'solicitado_por *',  hint: 'Nombre o equipo' },
@@ -83,6 +82,7 @@ const MASTER_COLS = [
   { key: 'tiempo_real',     label: 'tiempo_real',       hint: 'Número entero (minutos)' },
   { key: 'fecha_solicitud', label: 'fecha_solicitud *', hint: 'DD/MM/AAAA' },
   { key: 'deadline',        label: 'deadline *',        hint: 'DD/MM/AAAA' },
+  { key: 'fecha_planificada', label: 'fecha_planificada', hint: 'Opcional. DD/MM/AAAA. Día en el que quieres trabajarla' },
 ]
 
 function diasRetrasoFn(deadline: string, today: string): number { return diasRetraso(deadline, today) }
@@ -481,7 +481,11 @@ export default function Home() {
   const [importModal, setImportModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [editId, setEditId] = useState<number | null>(null)
-  const [tab, setTab] = useState(() => typeof window !== 'undefined' ? (localStorage.getItem('gestor_tab') || 'Plan') : 'Plan')
+  const [tab, setTab] = useState(() => {
+    if (typeof window === 'undefined') return 'Plan'
+    const saved = localStorage.getItem('gestor_tab') || 'Plan'
+    return saved === 'Casa' ? 'Plan' : saved
+  })
   const [saving, setSaving] = useState(false)
   const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -904,7 +908,7 @@ export default function Home() {
 
   async function duplicateTask(t: Tarea) {
     const maxOrden = tareas.length > 0 ? Math.max(...tareas.map(x => x.orden||0)) : 0
-    const { tarea, tipo, notas, solicitado_por, prioridad, tiempo_estimado, fecha_solicitud, deadline, en_plan } = t
+    const { tarea, tipo, notas, solicitado_por, prioridad, tiempo_estimado, fecha_solicitud, deadline, fecha_planificada, en_plan } = t
     await supabase.from('tareas').insert({
       tarea: `${tarea} (copia)`,
       tipo, notas, solicitado_por, prioridad,
@@ -912,6 +916,7 @@ export default function Home() {
       tiempo_estimado,
       fecha_solicitud: fecha_solicitud || null,
       deadline: deadline || null,
+      fecha_planificada: fecha_planificada || null,
       fecha_finalizacion: null,
       hora_finalizacion: null,
       done: false,
@@ -967,6 +972,7 @@ export default function Home() {
       tiempo_real: 0,
       fecha_solicitud: t.fecha_solicitud || today,
       deadline: part.deadline,
+      fecha_planificada: null,
       fecha_finalizacion: null,
       hora_finalizacion: null,
       done: false,
@@ -1099,7 +1105,13 @@ export default function Home() {
   async function saveTask() {
     if (!validate()) return
     setSaving(true)
-    const clean = { ...form, fecha_solicitud: form.fecha_solicitud||null, deadline: form.deadline||null, fecha_finalizacion: form.fecha_finalizacion||null }
+    const clean = {
+      ...form,
+      fecha_solicitud: form.fecha_solicitud||null,
+      deadline: form.deadline||null,
+      fecha_planificada: form.fecha_planificada || null,
+      fecha_finalizacion: form.fecha_finalizacion||null
+    }
     if (editId) {
       await supabase.from('tareas').update(clean).eq('id', editId)
     } else {
@@ -1115,7 +1127,7 @@ export default function Home() {
     if (t.deadline && t.deadline < today && !t.done && t.estado !== 'Omitida') {
       if (!confirm(`Esta tarea tiene ${diasRetrasoFn(t.deadline, today)} día(s) de retraso. ¿Quieres editarla de todas formas?`)) return
     }
-    setForm({ tipo:t.tipo, tarea:t.tarea, notas:t.notas||'', prioridad:t.prioridad, estado:t.estado, tiempo_estimado:t.tiempo_estimado, tiempo_real:t.tiempo_real||0, fecha_solicitud:t.fecha_solicitud||'', deadline:t.deadline||'', fecha_finalizacion:t.fecha_finalizacion||'', done:t.done, solicitado_por:(t as any).solicitado_por||'', orden:t.orden||0, en_plan:t.en_plan||false, excluir_plan:t.excluir_plan||false })
+    setForm({ tipo:t.tipo, tarea:t.tarea, notas:t.notas||'', prioridad:t.prioridad, estado:t.estado, tiempo_estimado:t.tiempo_estimado, tiempo_real:t.tiempo_real||0, fecha_solicitud:t.fecha_solicitud||'', deadline:t.deadline||'', fecha_planificada:t.fecha_planificada||'', fecha_finalizacion:t.fecha_finalizacion||'', done:t.done, solicitado_por:(t as any).solicitado_por||'', orden:t.orden||0, en_plan:t.en_plan||false, excluir_plan:t.excluir_plan||false })
     setErrors({}); setEditId(t.id); setModal(true)
   }
 
@@ -1135,7 +1147,7 @@ export default function Home() {
 
   function exportCSV() {
     const header = MASTER_COLS.map(c => c.label).join(';')
-    const rows = tareas.map(t => [t.tipo,t.tarea,t.notas||'',(t as any).solicitado_por||'',t.prioridad,t.estado,t.tiempo_estimado||0,t.tiempo_real||0,fDate(t.fecha_solicitud),fDate(t.deadline)].join(';'))
+    const rows = tareas.map(t => [t.tipo,t.tarea,t.notas||'',(t as any).solicitado_por||'',t.prioridad,t.estado,t.tiempo_estimado||0,t.tiempo_real||0,fDate(t.fecha_solicitud),fDate(t.deadline),fDate(t.fecha_planificada||'')].join(';'))
     const blob = new Blob(['\ufeff' + [header,...rows].join('\n')], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a'); a.href=url; a.download=`tareas_${today}.csv`; a.click()
@@ -1170,7 +1182,7 @@ export default function Home() {
       const row = parseLine(lines[i]); if (row.every(c=>!c)) continue
       const rn=i+1
       const tarea=get(row,'tarea'), tipo=get(row,'tipo'), sp=get(row,'solicitado_por')
-      const tr=get(row,'tiempo_estimado'), fr=get(row,'fecha_solicitud'), dr=get(row,'deadline')
+      const tr=get(row,'tiempo_estimado'), fr=get(row,'fecha_solicitud'), dr=get(row,'deadline'), fpr=get(row,'fecha_planificada')
       if (!tarea){errs.push(`Fila ${rn}: falta "tarea"`);continue}
       if (seenCsv.has(tarea)){errs.push(`Fila ${rn}: tarea repetida dentro del CSV: "${tarea}"`);continue}
       seenCsv.add(tarea)
@@ -1181,11 +1193,13 @@ export default function Home() {
       if (!dr){errs.push(`Fila ${rn}: falta "deadline"`);continue}
       const fs=parseDate(fr); if(!fs){errs.push(`Fila ${rn}: fecha_solicitud inválida`);continue}
       const dl=parseDate(dr); if(!dl){errs.push(`Fila ${rn}: deadline inválido`);continue}
+      const fp = fpr ? parseDate(fpr) : null
+      if (fpr && !fp) { errs.push(`Fila ${rn}: fecha_planificada inválida`); continue }
 
       const payload = {
         tipo,tarea,notas:get(row,'notas')||null,solicitado_por:sp,prioridad:get(row,'prioridad')||'Media',
         estado:get(row,'estado')||'Pendiente',tiempo_estimado:parseInt(tr)||0,tiempo_real:parseInt(get(row,'tiempo_real'))||0,
-        fecha_solicitud:fs,deadline:dl,fecha_finalizacion:null,hora_finalizacion:null,done:false,en_plan:false,excluir_plan:false
+        fecha_solicitud:fs,deadline:dl,fecha_planificada:fp,fecha_finalizacion:null,hora_finalizacion:null,done:false,en_plan:false,excluir_plan:false
       }
 
       const exists = tareas.find(t => t.tarea === tarea)
@@ -1629,6 +1643,14 @@ export default function Home() {
               </Field>
               <Field label="Deadline *" error={errors.deadline}>
                 <input type="date" value={form.deadline} onChange={e=>setForm({...form,deadline:e.target.value})} className={inputCls(errors.deadline)}/>
+              </Field>
+              <Field label="Fecha planificada">
+                <input
+                  type="date"
+                  value={form.fecha_planificada || ''}
+                  onChange={e=>setForm({...form,fecha_planificada:e.target.value})}
+                  className={inputCls()}
+                />
               </Field>
               {editId&&(
                 <Field label="Plan del día" full>
