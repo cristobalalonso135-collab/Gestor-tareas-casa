@@ -167,22 +167,6 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     setSavingJornada(false)
     setEditingJornada(null)
   }
-
-  async function savePlanDate(t: Tarea, fecha: string) {
-    setSavingPlanDate(true)
-    const cleanFecha = fecha || null
-    const { error } = await supabase
-      .from('tareas')
-      .update({ fecha_planificada: cleanFecha })
-      .eq('id', t.id)
-
-    if (error) alert(`No pude guardar la fecha planificada: ${error.message}`)
-    else {
-      setAllTareas(prev => prev.map(x => x.id === t.id ? { ...x, fecha_planificada: cleanFecha } : x))
-      setEditingPlanDateId(null)
-      setPlanDateInput('')
-    }
-    setSavingPlanDate(false)
   }
 
   const tareasBase = allTareas.filter(t => t.es_padre !== true)
