@@ -167,7 +167,6 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     setSavingJornada(false)
     setEditingJornada(null)
   }
-  }
 
   const tareasBase = allTareas.filter(t => t.es_padre !== true)
 
@@ -278,7 +277,6 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
 
   function renderTaskRow(t: Tarea, variant: 'normal' | 'overdue' = 'normal') {
     const isOverdue = !!t.deadline && t.deadline < todayStr && !isInactive(t)
-    const isPlanned = !!t.fecha_planificada
     const delayDays = isOverdue && t.deadline ? Math.abs(daysBetween(todayStr, t.deadline)) : 0
 
     return (
