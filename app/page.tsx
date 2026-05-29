@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import CargaTrabajo from './CargaTrabajo'
+import Ejecucion from './Ejecucion'
 
 type Tarea = {
   id: number
@@ -45,6 +46,7 @@ const TABS = [
   { key: 'Táctica',     label: 'Tácticas',     emoji: '🎯', sub: '≤120 min' },
   { key: 'Estratégica', label: 'Estratégicas', emoji: '🔭', sub: '>120 min' },
   { key: 'Completadas', label: 'Historial',    emoji: '📁', sub: '' },
+  { key: 'Ejecucion',   label: 'Ejecución',    emoji: '📈', sub: '' },
   { key: 'Carga',       label: 'Carga de trabajo', emoji: '📊', sub: '' },
 ]
 
@@ -56,8 +58,8 @@ const empty: Omit<Tarea, 'id'> = {
 
 const TIPO_COLORS: Record<string, { bg: string, text: string, dot: string }> = {
   Operativa:   { bg: 'bg-sky-50',     text: 'text-sky-700',     dot: 'bg-sky-400' },
-  Táctica:     { bg: 'bg-violet-50',  text: 'text-violet-700',  dot: 'bg-violet-400' },
-  Estratégica: { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400' },
+  'Táctica':     { bg: 'bg-violet-50',  text: 'text-violet-700',  dot: 'bg-violet-400' },
+  'Estratégica': { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400' },
   Diaria:      { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-400' },
   Semanal:     { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-500' },
   Mensual:     { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-600' },
@@ -142,13 +144,15 @@ function GeneralKpis({ tareas, filtered, tab, today }: { tareas: any[], filtered
   )
 }
 
-function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPause, onReset, formatCrono, today, previsionMin, setPrevisionMin, onAdjustStart }:
-  { tareas: any[], filtered: any[], cronoSeconds: number, cronoRunning: boolean, onStart: ()=>void, onPause: ()=>void, onReset: ()=>void, formatCrono: (s:number)=>string, today: string, previsionMin: number, setPrevisionMin: (v:number)=>void, onAdjustStart: (hhmm:string)=>void }) {
+function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPause, onReset, formatCrono, today, previsionMin, setPrevisionMin, onAdjustStart, onAdjustEnd }:
+  { tareas: any[], filtered: any[], cronoSeconds: number, cronoRunning: boolean, onStart: ()=>void, onPause: ()=>void, onReset: ()=>void, formatCrono: (s:number)=>string, today: string, previsionMin: number, setPrevisionMin: (v:number)=>void, onAdjustStart: (hhmm:string)=>void, onAdjustEnd: (hhmm:string)=>void }) {
 
   const [editingPrev, setEditingPrev] = useState(false)
   const [prevInput, setPrevInput] = useState(String(previsionMin))
   const [editingStart, setEditingStart] = useState(false)
   const [startInput, setStartInput] = useState('09:00')
+  const [editingEnd, setEditingEnd] = useState(false)
+  const [endInput, setEndInput] = useState('17:30')
 
   const total = filtered.length
   const hechas = filtered.filter((t: any) => t.done || t.estado === 'Completada' || t.estado === 'Omitida').length
@@ -202,6 +206,25 @@ function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPau
             <button onClick={()=>setEditingStart(true)}
               className="text-xs font-semibold text-gray-600 border border-dashed border-gray-300 px-2 py-1 rounded hover:bg-white hover:border-gray-400 transition"
               title="Ajustar segun hora de fichaje">
+              Ajustar
+            </button>
+          )}
+        </div>
+
+        {/* Hora fin editable */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-xs text-gray-400">Fin:</span>
+          {editingEnd ? (
+            <div className="flex items-center gap-1">
+              <input type="time" value={endInput} onChange={e=>setEndInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter'){onAdjustEnd(endInput);setEditingEnd(false)}if(e.key==='Escape')setEditingEnd(false)}}
+                className="w-24 border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-gray-500" autoFocus/>
+              <button onClick={()=>{onAdjustEnd(endInput);setEditingEnd(false)}} className="text-xs text-emerald-500 font-bold">OK</button>
+            </div>
+          ) : (
+            <button onClick={()=>setEditingEnd(true)}
+              className="text-xs font-semibold text-gray-600 border border-dashed border-gray-300 px-2 py-1 rounded hover:bg-white hover:border-gray-400 transition"
+              title="Ajustar segun hora de fin de fichaje">
               Ajustar
             </button>
           )}
@@ -679,6 +702,10 @@ export default function Home() {
     const excluidaHoy = !!t.excluir_plan && (t as any).excluida_fecha === today
     if (excluidaHoy) return false
 
+    // Si tiene fecha_planificada, manda esa fecha.
+    // Así no aparece todos los días solo porque el deadline esté vencido.
+    if (t.fecha_planificada) return t.fecha_planificada === today
+
     if (t.deadline && t.deadline <= today) return true
     return !!t.en_plan
   }
@@ -790,6 +817,7 @@ export default function Home() {
     if (key==='Todas') return stats.activas
     if (key==='Plan') return stats.plan
     if (key==='Completadas') return stats.completadas
+    if (key==='Carga' || key==='Ejecucion') return 0
     if (key==='Rutinaria') return tareasNoPadre.filter(x => RUTINARIAS.includes(x.tipo) && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
     return tareasNoPadre.filter(x => x.tipo===key && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
   }
@@ -1031,7 +1059,7 @@ export default function Home() {
     setCronoRunning(true)
   }
 
-  // Ajustar cronÃ³metro segÃºn hora de fichaje real
+  // Ajustar cronómetro según hora de fichaje real
   function adjustCronoFromStart(hhmm: string) {
     if (!hhmm) return
     const [h, m] = hhmm.split(':').map(Number)
@@ -1048,6 +1076,32 @@ export default function Home() {
       localStorage.setItem('gestor_crono_running', 'true')
       localStorage.setItem('gestor_crono_started_at', String(Date.now() - elapsedSecs * 1000))
     }
+  }
+
+  // Ajustar cronómetro según hora de fin de fichaje real
+  function adjustCronoToEnd(hhmm: string) {
+    if (!hhmm) return
+    const [h, m] = hhmm.split(':').map(Number)
+    if (isNaN(h) || isNaN(m)) return
+
+    const now = new Date()
+    const endDate = new Date()
+    endDate.setHours(h, m, 0, 0)
+
+    const secondsAfterEnd = Math.max(0, Math.floor((now.getTime() - endDate.getTime()) / 1000))
+    const adjusted = Math.max(0, cronoSeconds - secondsAfterEnd)
+
+    if (cronoRef.current) clearInterval(cronoRef.current)
+
+    setCronoSeconds(adjusted)
+    setCronoRunning(false)
+    cronoStartRef.current = null
+
+    localStorage.setItem('gestor_crono_running', 'false')
+    localStorage.setItem('gestor_crono_seconds', String(adjusted))
+    localStorage.removeItem('gestor_crono_started_at')
+
+    saveCronoToday(Math.floor(adjusted / 60))
   }
 
   function pauseCrono() {
@@ -1363,15 +1417,15 @@ export default function Home() {
               )
             })}
           </div>
-          {hasFilters&&tab!=='Carga'&&(
+          {hasFilters&&tab!=='Carga'&&tab!=='Ejecucion'&&(
             <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">Limpiar filtros</button>
           )}
         </div>
 
-        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : <>
+        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : tab === 'Ejecucion' ? <Ejecucion onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} jornadaMin={previsionMin} cronoSeconds={cronoSeconds} /> : <>
 
         {tab === 'Plan' ? (
-          <PlanKpis tareas={tareas} filtered={filtered} cronoSeconds={cronoSeconds} cronoRunning={cronoRunning} onStart={startCrono} onPause={pauseCrono} onReset={resetCrono} formatCrono={formatCrono} today={today} previsionMin={previsionMin} setPrevisionMin={setPrevisionMin} onAdjustStart={adjustCronoFromStart}/>
+          <PlanKpis tareas={tareas} filtered={filtered} cronoSeconds={cronoSeconds} cronoRunning={cronoRunning} onStart={startCrono} onPause={pauseCrono} onReset={resetCrono} formatCrono={formatCrono} today={today} previsionMin={previsionMin} setPrevisionMin={setPrevisionMin} onAdjustStart={adjustCronoFromStart} onAdjustEnd={adjustCronoToEnd}/>
         ) : (
           <GeneralKpis tareas={tareas} filtered={filtered} tab={tab} today={today}/>
         )}
