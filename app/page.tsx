@@ -813,6 +813,21 @@ export default function Home() {
     return result
   }
   const filtered = getFiltered(tareas)
+  const isInactiveForPlan = (t: Tarea) =>
+    t.done === true ||
+    (t.done as any) === 'true' ||
+    t.estado === 'Completada' ||
+    t.estado === 'Omitida'
+
+  // Solo afecta a la tabla: pendientes arriba, completadas/omitidas hoy abajo.
+  // Los KPIs siguen usando `filtered`, así cuentan todo el Plan del día.
+  const displayFiltered = tab === 'Plan'
+    ? [
+        ...filtered.filter(t => !isInactiveForPlan(t)),
+        ...filtered.filter(t => isInactiveForPlan(t)),
+      ]
+    : filtered
+
   const hasFilters = !!(fTarea || fTipo.size || fEstado.size || fFechaSol.size || fDeadline.size || fFechaFin.size)
   function handleSort(col: string) {
     if (sortCol === col) {
@@ -880,7 +895,7 @@ export default function Home() {
     if (dragIdx.current === null || dragOver.current === null || dragIdx.current === dragOver.current) {
       setDragging(null); setDragOverIdx(null); return
     }
-    const newList = [...filtered]
+    const newList = [...displayFiltered]
     const [moved] = newList.splice(dragIdx.current, 1)
     newList.splice(dragOver.current, 0, moved)
     const idToOrden: Record<number, number> = {}
@@ -1559,16 +1574,16 @@ export default function Home() {
                 <tr><td colSpan={10} className="text-center py-20 text-gray-300 text-sm">
                   <div className="flex flex-col items-center gap-3"><div className="w-5 h-5 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin"></div>Cargando...</div>
                 </td></tr>
-              ):filtered.length===0?(
+              ):displayFiltered.length===0?(
                 <tr><td colSpan={10} className="text-center py-20 text-sm">
                   <div className="flex flex-col items-center gap-2 text-gray-300">
                     <span className="text-4xl">{tab==='Plan'?'☀️':tab==='Completadas'?'✓':'○'}</span>
                     <span>{hasFilters?'Sin resultados para estos filtros':tab==='Plan'?'Sin tareas para hoy':tab==='Completadas'?'Aún no hay completadas':'Sin tareas aquí'}</span>
                   </div>
                 </td></tr>
-              ):filtered.map((t,idx)=>{
+              ):displayFiltered.map((t,idx)=>{
                 const tIsInactive = t.done===true||(t.done as any)==='true'||t.estado==='Completada'||t.estado==='Omitida'
-                const firstInactiveIdx = filtered.findIndex(x => x.done===true||(x.done as any)==='true'||x.estado==='Completada'||x.estado==='Omitida')
+                const firstInactiveIdx = displayFiltered.findIndex(x => isInactiveForPlan(x))
                 const showDivider = tab==='Plan' && tIsInactive && idx===firstInactiveIdx
 
                 const tipoC=TIPO_COLORS[t.tipo]
@@ -1597,13 +1612,13 @@ export default function Home() {
                     </tr>
                   )}
                   <tr key={t.id}
-                    draggable={!sortCol}
-                    onDragStart={()=>onDragStart(idx)}
-                    onDragEnter={()=>onDragEnter(idx)}
+                    draggable={!sortCol && !tIsInactive}
+                    onDragStart={()=>{ if (!tIsInactive) onDragStart(idx) }}
+                    onDragEnter={()=>{ if (!tIsInactive) onDragEnter(idx) }}
                     onDragEnd={onDrop}
                     onDragOver={e=>e.preventDefault()}
                     className={`border-b border-gray-50 group transition-colors ${isDragging?'opacity-40':''} ${isOver?'border-t-2 border-t-gray-400':''} ${idx%2===1?'bg-blue-50/20 hover:bg-blue-50/60':'bg-white hover:bg-blue-50/60'}`}
-                    style={{height:52,cursor:sortCol?'default':'grab'}}>
+                    style={{height:52,cursor:(sortCol || tIsInactive)?'default':'grab'}}>
 
                     <td className="px-3 text-center">
                       <div className="flex items-center justify-center gap-1">
