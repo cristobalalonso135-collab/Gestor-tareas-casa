@@ -504,11 +504,8 @@ export default function Home() {
   const [importModal, setImportModal] = useState(false)
   const [form, setForm] = useState(empty)
   const [editId, setEditId] = useState<number | null>(null)
-  const [tab, setTab] = useState(() => {
-    if (typeof window === 'undefined') return 'Plan'
-    const saved = localStorage.getItem('gestor_tab') || 'Plan'
-    return saved === 'Casa' ? 'Plan' : saved
-  })
+  const [tab, setTab] = useState('Plan')
+  const [mounted, setMounted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -561,8 +558,8 @@ export default function Home() {
   const [fragmentDeadlines, setFragmentDeadlines] = useState<string[]>([])
 
   const [previsionMin, setPrevisionMin] = useState(480)
-  const [cronoRunning, setCronoRunning] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('gestor_crono_running') === 'true' : false)
-  const [cronoSeconds, setCronoSeconds] = useState(() => typeof window !== 'undefined' ? parseInt(localStorage.getItem('gestor_crono_seconds') || '0') || 0 : 0)
+  const [cronoRunning, setCronoRunning] = useState(false)
+  const [cronoSeconds, setCronoSeconds] = useState(0)
   const cronoRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cronoStartRef = useRef<number | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -586,9 +583,49 @@ export default function Home() {
   const colResizing = useRef<{ col: number, startX: number, startW: number } | null>(null)
   const today = new Date().toISOString().split('T')[0]
 
+  function cleanDateValue(value?: string | null): string {
+    if (!value) return ''
+
+    const raw = String(value).trim()
+
+    // ISO normal: 2026-06-04 o 2026-06-04T10:00:00
+    const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+
+    // Formato español: 04/06/2026
+    const es = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+    if (es) {
+      const d = es[1].padStart(2, '0')
+      const m = es[2].padStart(2, '0')
+      const y = es[3]
+      return `${y}-${m}-${d}`
+    }
+
+    return raw.slice(0, 10)
+  }
+
+  function dateIsTodayOrPast(value?: string | null): boolean {
+    const d = cleanDateValue(value)
+    return !!d && d <= today
+  }
+
   useEffect(() => {
+    const savedTab = localStorage.getItem('gestor_tab')
+    if (savedTab) setTab(savedTab as any)
+    // gestor_tab_restored
+  }, [])
+
+  useEffect(() => {
+    setMounted(true)
+    const savedTab = localStorage.getItem('gestor_tab') || 'Plan'
+    setTab(savedTab === 'Casa' ? 'Plan' : savedTab)
+    // gestor_tab_mounted_restore
+  }, [])
+
+  useEffect(() => {
+    if (!mounted) return
     localStorage.setItem('gestor_tab', tab)
-  }, [tab])
+  }, [tab, mounted])
 
   useEffect(() => {
     const running = localStorage.getItem('gestor_crono_running') === 'true'
@@ -670,22 +707,26 @@ export default function Home() {
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
       const isParent = (t as any).es_padre === true
       if (isParent) return false
+
       const normalized = { ...t, done: isDone }
+      const inPlanToday = isEnPlan(normalized)
 
       if (tab === 'Todas') return !isInactive
       if (tab === 'Completadas') return isInactive
 
       if (tab === 'Plan') {
-        if (!isInactive && isEnPlan(normalized)) return true
-        if (isInactive && t.fecha_finalizacion === today && !t.excluir_plan) return true
+        if (!isInactive && inPlanToday) return true
+        if (isInactive && cleanDateValue(t.fecha_finalizacion) === today && !t.excluir_plan) return true
         return false
       }
 
+      // Regla de siempre:
+      // si una tarea entra en Plan del día, desaparece de Rutinarias/Operativas/Tácticas/Estratégicas.
       if (tab === 'Rutinaria') {
-        return !isInactive && RUTINARIAS.includes(t.tipo) && !isEnPlan(normalized)
+        return !isInactive && RUTINARIAS.includes(t.tipo) && !inPlanToday
       }
 
-      return !isInactive && t.tipo === tab && !isEnPlan(normalized)
+      return !isInactive && t.tipo === tab && !inPlanToday
     })
   }
   const tabFiltered = getTabFiltered()
@@ -699,14 +740,18 @@ export default function Home() {
     const isDone = t.done === true || (t.done as any) === 'true'
     if (isDone || t.estado === 'Omitida' || t.estado === 'Completada' || (t as any).es_padre === true) return false
 
-    const excluidaHoy = !!t.excluir_plan && (t as any).excluida_fecha === today
+    const excluidaHoy = !!t.excluir_plan && cleanDateValue((t as any).excluida_fecha) === today
     if (excluidaHoy) return false
 
-    // Si tiene fecha_planificada, manda esa fecha.
-    // Así no aparece todos los días solo porque el deadline esté vencido.
-    if (t.fecha_planificada) return t.fecha_planificada === today
+    // Si tiene fecha planificada:
+    // futura => no sale todavía
+    // hoy o pasada => sí sale en Plan del día
+    if (t.fecha_planificada) return dateIsTodayOrPast(t.fecha_planificada)
 
-    if (t.deadline && t.deadline <= today) return true
+    // Si NO tiene fecha planificada:
+    // entra por deadline vencido o de hoy
+    if (t.deadline) return dateIsTodayOrPast(t.deadline)
+
     return !!t.en_plan
   }
 
@@ -716,20 +761,22 @@ export default function Home() {
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
       const isParent = (t as any).es_padre === true
       if (isParent) return false
+
       const normalized = { ...t, done: isDone }
+      const inPlanToday = isEnPlan(normalized)
 
       if (tab === 'Todas') {
         if (isInactive) return false
       } else if (tab === 'Completadas') {
         if (!isInactive) return false
       } else if (tab === 'Plan') {
-        const inPlan = (!isInactive && isEnPlan(normalized)) ||
-          (isInactive && t.fecha_finalizacion === today && !t.excluir_plan)
+        const inPlan = (!isInactive && inPlanToday) ||
+          (isInactive && cleanDateValue(t.fecha_finalizacion) === today && !t.excluir_plan)
         if (!inPlan) return false
       } else if (tab === 'Rutinaria') {
-        if (isInactive || !RUTINARIAS.includes(t.tipo) || isEnPlan(normalized)) return false
+        if (isInactive || !RUTINARIAS.includes(t.tipo) || inPlanToday) return false
       } else {
-        if (isInactive || t.tipo !== tab || isEnPlan(normalized)) return false
+        if (isInactive || t.tipo !== tab || inPlanToday) return false
       }
 
       if (fTarea && !t.tarea.toLowerCase().includes(fTarea.toLowerCase()) && !(t.notas||'').toLowerCase().includes(fTarea.toLowerCase())) return false
@@ -741,43 +788,30 @@ export default function Home() {
       return true
     })
 
-    const isInact = (t: any) => t.done === true || (t.done as any) === 'true' || t.estado === 'Omitida' || t.estado === 'Completada'
-
     if (sortCol) {
-      result.sort((a, b) => {
-        if (tab === 'Plan') {
-          const aI = isInact(a), bI = isInact(b)
-          if (aI && !bI) return 1
-          if (!aI && bI) return -1
-          if (aI && bI) return (a.hora_finalizacion||'') > (b.hora_finalizacion||'') ? 1 : -1
+      result.sort((a: any, b: any) => {
+        let av = a[sortCol]
+        let bv = b[sortCol]
+
+        if (sortCol === 'deadline' || sortCol === 'fecha_solicitud' || sortCol === 'fecha_finalizacion' || sortCol === 'fecha_planificada') {
+          av = cleanDateValue(av) || '9999-12-31'
+          bv = cleanDateValue(bv) || '9999-12-31'
+        } else if (sortCol === 'tiempo_estimado' || sortCol === 'tiempo_real') {
+          av = Number(av || 0)
+          bv = Number(bv || 0)
+        } else {
+          av = String(av || '').toLowerCase()
+          bv = String(bv || '').toLowerCase()
         }
-        let av: any, bv: any
-        if (sortCol === 'tarea') { av = a.tarea?.toLowerCase()||''; bv = b.tarea?.toLowerCase()||'' }
-        else if (sortCol === 'tipo') { av = a.tipo; bv = b.tipo }
-        else if (sortCol === 'estado') { av = a.estado; bv = b.estado }
-        else if (sortCol === 'deadline') { av = a.deadline||'9999'; bv = b.deadline||'9999' }
-        else if (sortCol === 'fecha_solicitud') { av = a.fecha_solicitud||''; bv = b.fecha_solicitud||'' }
-        else if (sortCol === 'tiempo_estimado') { av = a.tiempo_estimado||0; bv = b.tiempo_estimado||0 }
-        else if (sortCol === 'tiempo_real') { av = a.tiempo_real||0; bv = b.tiempo_real||0 }
-        else { av = 0; bv = 0 }
+
         if (av < bv) return sortDir === 'asc' ? -1 : 1
         if (av > bv) return sortDir === 'asc' ? 1 : -1
         return 0
       })
-      return result
     }
 
-    return result.sort((a, b) => {
-      if (tab === 'Plan') {
-        const aI = isInact(a), bI = isInact(b)
-        if (aI && !bI) return 1
-        if (!aI && bI) return -1
-        if (aI && bI) return (a.hora_finalizacion||'') > (b.hora_finalizacion||'') ? 1 : -1
-      }
-      return (a.orden ?? 0) - (b.orden ?? 0)
-    })
+    return result
   }
-
   const filtered = getFiltered(tareas)
   const hasFilters = !!(fTarea || fTipo.size || fEstado.size || fFechaSol.size || fDeadline.size || fFechaFin.size)
   function handleSort(col: string) {
@@ -822,9 +856,27 @@ export default function Home() {
     return tareasNoPadre.filter(x => x.tipo===key && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
   }
 
-  function onDragStart(idx: number) { dragIdx.current = idx; setDragging(idx) }
-  function onDragEnter(idx: number) { dragOver.current = idx; setDragOverIdx(idx) }
+  function onDragStart(idx: number) {
+    if (sortCol) return
+    dragIdx.current = idx
+    setDragging(idx)
+  }
+
+  function onDragEnter(idx: number) {
+    if (sortCol) return
+    dragOver.current = idx
+    setDragOverIdx(idx)
+  }
+
   async function onDrop() {
+    if (sortCol) {
+      dragIdx.current = null
+      dragOver.current = null
+      setDragging(null)
+      setDragOverIdx(null)
+      return
+    }
+
     if (dragIdx.current === null || dragOver.current === null || dragIdx.current === dragOver.current) {
       setDragging(null); setDragOverIdx(null); return
     }
@@ -834,9 +886,20 @@ export default function Home() {
     const idToOrden: Record<number, number> = {}
     newList.forEach((t, i) => { idToOrden[t.id] = i + 1 })
     setTareas(prev => prev.map(t => idToOrden[t.id] !== undefined ? { ...t, orden: idToOrden[t.id] } : t))
-    dragIdx.current = null; dragOver.current = null
-    setDragging(null); setDragOverIdx(null)
-    await Promise.all(newList.map((t, i) => supabase.from('tareas').update({ orden: i+1 }).eq('id', t.id)))
+    dragIdx.current = null
+    dragOver.current = null
+    setDragging(null)
+    setDragOverIdx(null)
+    setSortCol(null)
+    setSortDir('asc')
+
+    await Promise.all(
+      newList.map((t, i) =>
+        supabase.from('tareas').update({ orden: i + 1 }).eq('id', t.id)
+      )
+    )
+
+    await fetchTareas()
   }
 
   async function togglePlan(t: Tarea) {
@@ -1384,16 +1447,18 @@ export default function Home() {
             </div>
             <span className="font-semibold text-gray-900 text-sm tracking-tight">Gestor de Tareas</span>
             <span className="text-gray-200">·</span>
-            <span className="text-gray-400 text-xs capitalize">{new Date().toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</span>
+            <span className="text-gray-400 text-xs capitalize" suppressHydrationWarning>{new Date().toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={downloadMaster} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Maestro</button>
-            <button onClick={()=>{setImportResult(null);setImportModal(true)}} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↑ Importar</button>
-            <button onClick={exportCSV} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Exportar</button>
-            {tab === 'Plan' && filtered.some(t => (t.done===true||(t.done as any)==='true'||t.estado==='Completada'||t.estado==='Omitida') && t.fecha_finalizacion===today) && (
-              <button onClick={archivarDia} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">Archivar día</button>
-            )}
-            {showNewBtn&&<button onClick={openNew} className="text-xs text-white bg-gray-900 hover:bg-gray-700 px-4 py-1.5 rounded-lg transition font-semibold">+ Nueva tarea</button>}
+            {mounted && <>
+              <button onClick={downloadMaster} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Maestro</button>
+              <button onClick={()=>{setImportResult(null);setImportModal(true)}} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↑ Importar</button>
+              <button onClick={exportCSV} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Exportar</button>
+              {tab === 'Plan' && filtered.some(t => (t.done===true||(t.done as any)==='true'||t.estado==='Completada'||t.estado==='Omitida') && t.fecha_finalizacion===today) && (
+                <button onClick={archivarDia} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">Archivar día</button>
+              )}
+              {showNewBtn&&<button onClick={openNew} className="text-xs text-white bg-gray-900 hover:bg-gray-700 px-4 py-1.5 rounded-lg transition font-semibold">+ Nueva tarea</button>}
+            </>}
           </div>
         </div>
       </div>
