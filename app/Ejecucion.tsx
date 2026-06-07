@@ -115,7 +115,7 @@ export default function Ejecucion({ onEditTarea, refreshKey }: Props) {
   const [hydrated, setHydrated] = useState(false)
   const [, setNowTick] = useState(Date.now())
   const [dragId, setDragId] = useState<number | null>(null)
-  const storeRef = useRef<FocusStore>(defaultStore)
+  const storeRef = useRef<FocusStore>(defaultStore())
 
   useEffect(() => {
     const saved = readStore()
