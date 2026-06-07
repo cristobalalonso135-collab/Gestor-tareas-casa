@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 type Tarea = {
@@ -9,17 +9,16 @@ type Tarea = {
   tarea: string
   estado: string
   tiempo_estimado: number
-  tiempo_real: number | null
-  deadline: string | null
+  tiempo_real?: number | null
+  deadline?: string | null
   fecha_planificada?: string | null
-  fecha_finalizacion: string | null
-  hora_finalizacion?: string | null
-  done: boolean
+  fecha_finalizacion?: string | null
+  done?: boolean | string | null
   orden?: number | null
-  en_plan?: boolean | null
   excluir_plan?: boolean | null
   excluida_fecha?: string | null
   es_padre?: boolean | null
+  notas?: string | null
 }
 
 type Props = {
@@ -29,26 +28,38 @@ type Props = {
   cronoSeconds?: number
 }
 
-const STORAGE = {
-  running: 'gestor_ejecucion_running',
-  elapsed: 'gestor_ejecucion_elapsed_seconds',
-  startedAt: 'gestor_ejecucion_started_at',
-  focusIds: 'gestor_ejecucion_focus_ids',
-  completedIds: 'gestor_ejecucion_completed_ids',
-  lastCompletion: 'gestor_ejecucion_last_completion_seconds',
+type FocusStore = {
+  ids: number[]
+  activeId: number | null
+  running: boolean
+  startedAt: number | null
+  accumulated: Record<string, number>
 }
 
+const STORAGE_KEY = 'gestor_foco_bloque_v2'
+
 const TIPO_DOT: Record<string, string> = {
-  Diaria: 'bg-gray-300',
-  Semanal: 'bg-gray-400',
-  Mensual: 'bg-gray-500',
   Operativa: 'bg-sky-400',
   Táctica: 'bg-violet-400',
   Estratégica: 'bg-amber-400',
+  Diaria: 'bg-gray-400',
+  Semanal: 'bg-gray-500',
+  Mensual: 'bg-gray-600',
 }
 
-function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+function cleanDateValue(value?: string | null): string {
+  if (!value) return ''
+  const raw = String(value).trim()
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+  const es = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+  if (es) {
+    const d = es[1].padStart(2, '0')
+    const m = es[2].padStart(2, '0')
+    const y = es[3]
+    return `${y}-${m}-${d}`
+  }
+  return raw.slice(0, 10)
 }
 
 function minToHM(min: number): string {
@@ -60,620 +71,353 @@ function minToHM(min: number): string {
   return `${h}h ${m}m`
 }
 
-function signedMinToHM(min: number): string {
-  const sign = min >= 0 ? '+' : '-'
-  return `${sign}${minToHM(Math.abs(min))}`
-}
-
 function secondsToClock(seconds: number): string {
-  const sign = seconds < 0 ? '-' : ''
-  const abs = Math.abs(seconds)
-  const h = Math.floor(abs / 3600)
-  const m = Math.floor((abs % 3600) / 60)
-  const s = abs % 60
-
-  if (h > 0) return `${sign}${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-  return `${sign}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  const safe = Math.max(0, Math.floor(seconds || 0))
+  const h = Math.floor(safe / 3600)
+  const m = Math.floor((safe % 3600) / 60)
+  const s = safe % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-function isInactive(t: Tarea) {
-  return t.done === true || t.estado === 'Completada' || t.estado === 'Omitida'
+function defaultStore(): FocusStore {
+  return { ids: [], activeId: null, running: false, startedAt: null, accumulated: {} }
 }
 
-function shortTaskName(name: string): string {
-  const match = name.match(/^(.*?)\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (!match) return name
-  const [, title, day, month] = match
-  const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
-  return `${title} · ${parseInt(day)} ${months[parseInt(month)-1]}`
-}
-
-function readIds(key: string): number[] {
-  if (typeof window === 'undefined') return []
+function readStore(): FocusStore {
+  if (typeof window === 'undefined') return defaultStore()
   try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return []
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return defaultStore()
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.map(Number).filter(Boolean) : []
+    return {
+      ids: Array.isArray(parsed.ids) ? parsed.ids.map(Number).filter(Boolean) : [],
+      activeId: parsed.activeId ? Number(parsed.activeId) : null,
+      running: !!parsed.running,
+      startedAt: parsed.startedAt ? Number(parsed.startedAt) : null,
+      accumulated: parsed.accumulated && typeof parsed.accumulated === 'object' ? parsed.accumulated : {},
+    }
   } catch {
-    return []
+    return defaultStore()
   }
 }
 
-function writeIds(key: string, ids: number[]) {
+function writeStore(store: FocusStore) {
   if (typeof window === 'undefined') return
-  localStorage.setItem(key, JSON.stringify([...new Set(ids)]))
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
 }
 
-export default function Ejecucion({ onEditTarea, refreshKey, jornadaMin: jornadaMinProp, cronoSeconds = 0 }: Props) {
-  const today = dateKey(new Date())
-
+export default function Ejecucion({ onEditTarea, refreshKey }: Props) {
+  const today = new Date().toISOString().split('T')[0]
   const [tareas, setTareas] = useState<Tarea[]>([])
   const [loading, setLoading] = useState(true)
+  const [store, setStore] = useState<FocusStore>(defaultStore)
+  const [hydrated, setHydrated] = useState(false)
+  const [, setNowTick] = useState(Date.now())
+  const [dragId, setDragId] = useState<number | null>(null)
+  const storeRef = useRef<FocusStore>(defaultStore)
 
-  const [running, setRunning] = useState(false)
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [focusIds, setFocusIds] = useState<number[]>([])
-  const [completedIds, setCompletedIds] = useState<number[]>([])
-  const [lastCompletionSeconds, setLastCompletionSeconds] = useState(0)
-  const [hoverPoint, setHoverPoint] = useState<{ label: string, value: string, x: number, y: number, color: string } | null>(null)
-  const [restoredSession, setRestoredSession] = useState(false)
-
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const jornadaMin = jornadaMinProp || 510
-  const cronoPlanMin = Math.floor((cronoSeconds || 0) / 60)
-
-  async function fetchTareas() {
-    setLoading(true)
-
-    const { data } = await supabase
-      .from('tareas')
-      .select('id,tipo,tarea,estado,tiempo_estimado,tiempo_real,deadline,fecha_planificada,fecha_finalizacion,hora_finalizacion,done,orden,en_plan,excluir_plan,excluida_fecha,es_padre')
-      .order('orden', { ascending: true })
-      .order('id', { ascending: false })
-
-    setTareas((data || []) as Tarea[])
-    setLoading(false)
-  }
-
-  useEffect(() => { fetchTareas() }, [])
-  useEffect(() => { if (refreshKey && refreshKey > 0) fetchTareas() }, [refreshKey])
-
-  // Restaurar sesión de foco aunque cambies de pestaña
   useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const storedElapsed = parseInt(localStorage.getItem(STORAGE.elapsed) || '0') || 0
-    const storedStartedAt = parseInt(localStorage.getItem(STORAGE.startedAt) || '0') || 0
-    const storedRunning = localStorage.getItem(STORAGE.running) === 'true'
-
-    setFocusIds(readIds(STORAGE.focusIds))
-    setCompletedIds(readIds(STORAGE.completedIds))
-    setLastCompletionSeconds(parseInt(localStorage.getItem(STORAGE.lastCompletion) || '0') || 0)
-
-    if (storedRunning && storedStartedAt > 0) {
-      const liveElapsed = storedElapsed + Math.max(0, Math.floor((Date.now() - storedStartedAt) / 1000))
-      setElapsedSeconds(liveElapsed)
-      setRunning(true)
-    } else {
-      setElapsedSeconds(storedElapsed)
-      setRunning(false)
-    }
-
-    setRestoredSession(true)
+    const saved = readStore()
+    setStore(saved)
+    storeRef.current = saved
+    setHydrated(true)
   }, [])
 
-  const activeProgressIds = useMemo(() => {
-    return tareas
-      .filter(t => (t.es_padre as any) !== true)
-      .filter(t => !isInactive(t))
-      .filter(t => t.estado === 'En progreso')
-      .map(t => t.id)
-  }, [tareas])
-
-  // Cualquier tarea marcada En progreso entra automáticamente en la sesión de foco
   useEffect(() => {
-    if (!restoredSession || loading) return
-    if (activeProgressIds.length === 0) return
-    setFocusIds(prev => {
-      const next = [...new Set([...prev, ...activeProgressIds])]
-      writeIds(STORAGE.focusIds, next)
-      return next
-    })
-  }, [activeProgressIds.join(','), restoredSession, loading])
+    storeRef.current = store
 
-  const foco = useMemo(() => {
-    return tareas
-      .filter(t => (t.es_padre as any) !== true)
-      .filter(t => focusIds.includes(t.id) || t.estado === 'En progreso')
-      .filter(t => t.estado !== 'Omitida')
-      .sort((a,b) => {
-        const ai = focusIds.indexOf(a.id)
-        const bi = focusIds.indexOf(b.id)
-        if (ai !== -1 && bi !== -1) return ai - bi
-        return (a.orden || 0) - (b.orden || 0)
-      })
-  }, [tareas, focusIds])
+    // Importante:
+    // No escribimos localStorage hasta haber leído el estado guardado.
+    // Si no, al cambiar de pestaña se monta el componente con defaultStore()
+    // y borra el bloque activo antes de recuperarlo.
+    if (!hydrated) return
 
-  const activeFoco = foco.filter(t => !(t.done || t.estado === 'Completada'))
-  const completedFoco = foco.filter(t => t.done || t.estado === 'Completada' || completedIds.includes(t.id))
+    writeStore(store)
+  }, [store, hydrated])
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !restoredSession) return
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
 
-    if (!running) {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      intervalRef.current = null
-      localStorage.setItem(STORAGE.running, 'false')
-      localStorage.setItem(STORAGE.elapsed, String(elapsedSeconds))
-      localStorage.removeItem(STORAGE.startedAt)
-      return
-    }
-
-    const baseElapsed = elapsedSeconds
-    const startedAt = Date.now()
-
-    localStorage.setItem(STORAGE.running, 'true')
-    localStorage.setItem(STORAGE.elapsed, String(baseElapsed))
-    localStorage.setItem(STORAGE.startedAt, String(startedAt))
-
-    intervalRef.current = setInterval(() => {
-      const next = baseElapsed + Math.floor((Date.now() - startedAt) / 1000)
-      setElapsedSeconds(next)
-    }, 1000)
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
-  }, [running, restoredSession])
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !restoredSession) return
-    localStorage.setItem(STORAGE.elapsed, String(elapsedSeconds))
-  }, [elapsedSeconds, running, restoredSession])
-
-  const totalFocoMin = foco.reduce((s,t) => s + (t.tiempo_estimado || 0), 0)
-  const totalFocoSeconds = totalFocoMin * 60
-  const remainingSeconds = totalFocoSeconds - elapsedSeconds
-  const overSeconds = Math.max(0, -remainingSeconds)
-  const elapsedMin = Math.floor(elapsedSeconds / 60)
-  const usedPct = totalFocoSeconds > 0 ? Math.min(100, (elapsedSeconds / totalFocoSeconds) * 100) : 0
-
-  const completadasHoy = useMemo(() => {
-    return tareas
-      .filter(t => (t.es_padre as any) !== true)
-      .filter(t => t.fecha_finalizacion === today && (t.done || t.estado === 'Completada'))
-      .sort((a,b) => (a.hora_finalizacion || '').localeCompare(b.hora_finalizacion || ''))
-  }, [tareas, today])
-
-  function isPlanActivoHoy(t: Tarea) {
-    if ((t.es_padre as any) === true) return false
-    if (isInactive(t)) return false
-
-    const excluidaHoy = !!t.excluir_plan && t.excluida_fecha === today
-    if (excluidaHoy) return false
-
-    // Si tiene fecha planificada, manda esa fecha.
-    // Así no entra por deadline en otros días.
-    if (t.fecha_planificada) return t.fecha_planificada === today
-
-    if (t.deadline && t.deadline <= today) return true
-    return !!t.en_plan
-  }
-
-  const planDia = useMemo(() => {
-    return tareas
-      .filter(t => (t.es_padre as any) !== true)
-      .filter(t => t.estado !== 'Omitida')
-      .filter(t => {
-        const completadaHoy = (t.done || t.estado === 'Completada') &&
-          t.fecha_finalizacion === today &&
-          !t.excluir_plan
-
-        const pendienteHoy = isPlanActivoHoy(t)
-
-        return completadaHoy || pendienteHoy
-      })
-  }, [tareas, today])
-
-
-  const completadasPlanDia = planDia.filter(
-    t => t.done || t.estado === 'Completada'
-  )
-
-  const pendientesPlanDia = planDia.filter(
-    t => !(t.done || t.estado === 'Completada')
-  )
-
-  // Naranja: estimado pendiente = tareas del Plan del día NO completadas y NO omitidas.
-  // Va bajando conforme completas tareas.
-  const estimadoHoy = pendientesPlanDia.reduce((s,t)=>s+(t.tiempo_estimado || 0), 0)
-
-  // Verde: estimado acumulado de lo ya completado.
-  const estimadoCompletado = completadasPlanDia.reduce((s,t)=>s+(t.tiempo_estimado || 0), 0)
-
-  // Gris: real acumulado = real de completadas + foco activo vivo.
-  const realCompletado = completadasPlanDia.reduce((s,t)=>s+(t.tiempo_real || 0), 0)
-  const realVivo = realCompletado + elapsedMin
-
-  // Violeta: jornada restante = horas planificadas menos cronómetro general del Plan del día.
-  const jornadaRestante = jornadaMin - cronoPlanMin
-
-  // Margen operativo = jornada restante menos estimado pendiente.
-  const margen = jornadaRestante - estimadoHoy
-
-  const desviacionRealVsEstimado = estimadoCompletado - realCompletado
-
-  function getCurrentElapsedSeconds() {
-    // Fuente única para completar: lo que ves en pantalla.
-    // Evitamos localStorage aquí porque puede arrastrar restos antiguos y descuadrar el tiempo real.
-    return elapsedSeconds
-  }
-
-  async function completar(t: Tarea) {
-    if (t.done || t.estado === 'Completada') return
-
-    const now = new Date().toISOString()
-    const currentElapsed = getCurrentElapsedSeconds()
-
-    // Regla estable:
-    // - Primera tarea completada en este foco = tiempo desde 0 hasta ahora.
-    // - Segunda y siguientes = desde la última completada hasta ahora.
-    // Miramos tareas REALMENTE completadas en BD dentro del foco, no restos viejos de localStorage.
-    const hasCompletedAlreadyInFocus = foco.some(x =>
-      x.id !== t.id && (x.done || x.estado === 'Completada')
-    )
-
-    const previousCompletion = hasCompletedAlreadyInFocus
-      ? Math.max(0, lastCompletionSeconds || parseInt(localStorage.getItem(STORAGE.lastCompletion) || '0') || 0)
-      : 0
-
-    const deltaSeconds = Math.max(0, currentElapsed - previousCompletion)
-    const realMin = Math.max(1, Math.round(deltaSeconds / 60))
-
-    await supabase
+  const fetchTareas = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase
       .from('tareas')
-      .update({
-        done: true,
-        estado: 'Completada',
-        fecha_finalizacion: today,
-        hora_finalizacion: now,
-        tiempo_real: realMin
-      })
-      .eq('id', t.id)
+      .select('*')
+      .order('orden', { ascending: true })
+      .order('id', { ascending: false })
+    setTareas(data || [])
+    setLoading(false)
+  }, [])
 
-    const nextCompleted = [...new Set([...completedIds, t.id])]
-    setCompletedIds(nextCompleted)
-    writeIds(STORAGE.completedIds, nextCompleted)
+  useEffect(() => {
+    fetchTareas()
+  }, [fetchTareas, refreshKey])
 
-    setLastCompletionSeconds(currentElapsed)
-    setElapsedSeconds(currentElapsed)
-    localStorage.setItem(STORAGE.lastCompletion, String(currentElapsed))
-    localStorage.setItem(STORAGE.elapsed, String(currentElapsed))
+  function isDone(t: Tarea) {
+    return t.done === true || (t.done as any) === 'true' || t.estado === 'Completada'
+  }
 
+  function isClosed(t: Tarea) {
+    return isDone(t) || t.estado === 'Omitida'
+  }
+
+  function dateIsTodayOrPast(value?: string | null): boolean {
+    const d = cleanDateValue(value)
+    return !!d && d <= today
+  }
+
+  function isPlanCandidate(t: Tarea) {
+    if ((t.es_padre as any) === true) return false
+    if (isClosed(t)) return false
+    const excluidaHoy = !!t.excluir_plan && cleanDateValue(t.excluida_fecha) === today
+    if (excluidaHoy) return false
+    if (t.fecha_planificada) return dateIsTodayOrPast(t.fecha_planificada)
+    if (t.deadline) return dateIsTodayOrPast(t.deadline)
+    return false
+  }
+
+  function currentSecondsFor(id: number, sourceStore = store) {
+    const base = Number(sourceStore.accumulated[String(id)] || 0)
+    if (sourceStore.running && sourceStore.activeId === id && sourceStore.startedAt) {
+      return base + Math.max(0, Math.floor((Date.now() - sourceStore.startedAt) / 1000))
+    }
+    return base
+  }
+
+  async function persistCurrentTime(sourceStore = store) {
+    const currentId = sourceStore.activeId
+    if (!currentId) return sourceStore
+    const seconds = currentSecondsFor(currentId, sourceStore)
+    const nextStore: FocusStore = {
+      ...sourceStore,
+      accumulated: { ...sourceStore.accumulated, [String(currentId)]: seconds },
+      startedAt: sourceStore.running ? Date.now() : null,
+    }
+    setStore(nextStore)
+    const minutes = Math.max(0, Math.round(seconds / 60))
+    await supabase.from('tareas').update({ tiempo_real: minutes, estado: 'En progreso' }).eq('id', currentId)
+    return nextStore
+  }
+
+  async function addToBlock(t: Tarea) {
+    setStore(prev => {
+      if (prev.ids.includes(t.id)) return prev
+      return {
+        ...prev,
+        ids: [...prev.ids, t.id],
+        accumulated: { ...prev.accumulated, [String(t.id)]: Number(t.tiempo_real || 0) * 60 },
+      }
+    })
+    await supabase.from('tareas').update({ estado: 'En progreso' }).eq('id', t.id)
     await fetchTareas()
   }
 
-  async function quitarDeFoco(t: Tarea) {
-    const nextFocus = focusIds.filter(id => id !== t.id)
-    const nextCompleted = completedIds.filter(id => id !== t.id)
-
-    setFocusIds(nextFocus)
-    setCompletedIds(nextCompleted)
-    writeIds(STORAGE.focusIds, nextFocus)
-    writeIds(STORAGE.completedIds, nextCompleted)
-
-    if (!(t.done || t.estado === 'Completada')) {
-      await supabase.from('tareas').update({ estado: 'Pendiente' }).eq('id', t.id)
-      await fetchTareas()
-    }
+  async function removeFromBlock(id: number) {
+    await persistCurrentTime(storeRef.current)
+    setStore(prev => {
+      const nextAccumulated = { ...prev.accumulated }
+      delete nextAccumulated[String(id)]
+      return {
+        ...prev,
+        ids: prev.ids.filter(x => x !== id),
+        activeId: prev.activeId === id ? null : prev.activeId,
+        running: prev.activeId === id ? false : prev.running,
+        startedAt: prev.activeId === id ? null : prev.startedAt,
+        accumulated: nextAccumulated,
+      }
+    })
+    const t = tareas.find(x => x.id === id)
+    if (t && !isClosed(t)) await supabase.from('tareas').update({ estado: 'Pendiente' }).eq('id', id)
+    await fetchTareas()
   }
 
-  function toggleRunning() {
-    if (running) {
-      const currentElapsed = getCurrentElapsedSeconds()
-      setElapsedSeconds(currentElapsed)
-      setRunning(false)
-      localStorage.setItem(STORAGE.running, 'false')
-      localStorage.setItem(STORAGE.elapsed, String(currentElapsed))
-      localStorage.removeItem(STORAGE.startedAt)
-      return
-    }
-
-    // Si empiezas una sesión nueva desde cero, la primera tarea contará desde cero.
-    if (elapsedSeconds === 0) {
-      setLastCompletionSeconds(0)
-      localStorage.setItem(STORAGE.lastCompletion, '0')
-    }
-
-    setRunning(true)
+  async function startTask(id: number) {
+    const current = storeRef.current
+    if (current.activeId && current.activeId !== id) await persistCurrentTime(current)
+    setStore(prev => ({
+      ...prev,
+      activeId: id,
+      running: true,
+      startedAt: Date.now(),
+      accumulated: { ...prev.accumulated, [String(id)]: Number(prev.accumulated[String(id)] || 0) },
+    }))
+    await supabase.from('tareas').update({ estado: 'En progreso' }).eq('id', id)
+    await fetchTareas()
   }
 
-  function resetTimer() {
-    setRunning(false)
-    setElapsedSeconds(0)
-    setLastCompletionSeconds(0)
-    setCompletedIds([])
-    localStorage.setItem(STORAGE.running, 'false')
-    localStorage.setItem(STORAGE.elapsed, '0')
-    localStorage.setItem(STORAGE.lastCompletion, '0')
-    localStorage.setItem(STORAGE.completedIds, '[]')
-    localStorage.removeItem(STORAGE.startedAt)
+  async function pauseActive() {
+    const latest = await persistCurrentTime(storeRef.current)
+    setStore({ ...latest, running: false, startedAt: null })
   }
 
-  const chartMaxX = Math.max(jornadaMin, realVivo, 60)
-  const chartMaxY = Math.max(jornadaMin, estimadoHoy, realVivo, estimadoCompletado, jornadaRestante, 60)
-
-  const width = 900
-  const height = 360
-  const pad = 58
-
-  function sx(x: number) {
-    return pad + (Math.min(x, chartMaxX) / chartMaxX) * (width - pad * 2)
+  async function resumeActive() {
+    if (!store.activeId) return
+    setStore(prev => ({ ...prev, running: true, startedAt: Date.now() }))
   }
 
-  function sy(y: number) {
-    return height - pad - (Math.min(Math.max(y, 0), chartMaxY) / chartMaxY) * (height - pad * 2)
+  async function completeTask(id: number) {
+    const latest = await persistCurrentTime(storeRef.current)
+    const seconds = currentSecondsFor(id, latest)
+    const minutes = Math.max(1, Math.round(seconds / 60))
+    const now = new Date().toISOString()
+    await supabase
+      .from('tareas')
+      .update({ done: true, estado: 'Completada', tiempo_real: minutes, fecha_finalizacion: today, hora_finalizacion: now })
+      .eq('id', id)
+    setStore(prev => ({
+      ...prev,
+      activeId: prev.activeId === id ? null : prev.activeId,
+      running: prev.activeId === id ? false : prev.running,
+      startedAt: prev.activeId === id ? null : prev.startedAt,
+      accumulated: { ...prev.accumulated, [String(id)]: minutes * 60 },
+    }))
+    await fetchTareas()
   }
 
-  // Naranja: total estimado del Plan del día.
-  const estimatedTodayPath = `M ${sx(0)} ${sy(estimadoHoy)} L ${sx(realVivo)} ${sy(estimadoHoy)}`
+  async function clearFinishedFromBlock() {
+    await persistCurrentTime(storeRef.current)
+    const closedIds = new Set(tareas.filter(t => storeRef.current.ids.includes(t.id)).filter(t => isClosed(t)).map(t => t.id))
+    setStore(prev => {
+      const nextAccumulated = { ...prev.accumulated }
+      closedIds.forEach(id => delete nextAccumulated[String(id)])
+      return {
+        ...prev,
+        ids: prev.ids.filter(id => !closedIds.has(id)),
+        activeId: prev.activeId && closedIds.has(prev.activeId) ? null : prev.activeId,
+        running: prev.activeId && closedIds.has(prev.activeId) ? false : prev.running,
+        startedAt: prev.activeId && closedIds.has(prev.activeId) ? null : prev.startedAt,
+        accumulated: nextAccumulated,
+      }
+    })
+  }
 
-  // Verde: estimado ya completado.
-  const estimatedCompletedPath = `M ${sx(0)} ${sy(0)} L ${sx(realVivo)} ${sy(estimadoCompletado)}`
+  async function resetBlock() {
+    if (!confirm('¿Cerrar el bloque actual? Las completadas se quedan completadas y las no completadas vuelven a Pendiente.')) return
+    await persistCurrentTime(storeRef.current)
+    const activeOpenIds = tareas.filter(t => storeRef.current.ids.includes(t.id)).filter(t => !isClosed(t)).map(t => t.id)
+    if (activeOpenIds.length > 0) await supabase.from('tareas').update({ estado: 'Pendiente' }).in('id', activeOpenIds)
+    setStore(defaultStore())
+    await fetchTareas()
+  }
 
-  // Gris: real acumulado.
-  const realPath = `M ${sx(0)} ${sy(0)} L ${sx(realVivo)} ${sy(realVivo)}`
+  function onDropIntoBlock(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const id = dragId || Number(e.dataTransfer.getData('text/plain'))
+    const task = tareas.find(t => t.id === id)
+    if (task) addToBlock(task)
+    setDragId(null)
+  }
 
-  // Violeta: jornada restante.
-  const jornadaRestantePath = `M ${sx(0)} ${sy(jornadaMin)} L ${sx(realVivo)} ${sy(jornadaRestante)}`
+  const focusTasks = useMemo(() => {
+    const byId = new Map(tareas.map(t => [t.id, t]))
+    return store.ids.map(id => byId.get(id)).filter(Boolean) as Tarea[]
+  }, [tareas, store.ids])
 
-  const timerTone =
-    remainingSeconds < 0 ? 'text-red-500' :
-    usedPct >= 85 ? 'text-orange-500' :
-    'text-gray-900'
+  const candidateTasks = useMemo(() => {
+    const inBlock = new Set(store.ids)
+    return tareas.filter(t => isPlanCandidate(t)).filter(t => !inBlock.has(t.id)).slice(0, 40)
+  }, [tareas, store.ids])
 
-  const barTone =
-    remainingSeconds < 0 ? 'bg-red-400' :
-    usedPct >= 85 ? 'bg-orange-400' :
-    'bg-emerald-400'
+  const activeTask = focusTasks.find(t => t.id === store.activeId) || null
+  const activeSeconds = activeTask ? currentSecondsFor(activeTask.id) : 0
+  const totalEstimated = focusTasks.filter(t => !isClosed(t)).reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+  const totalReal = focusTasks.reduce((s, t) => s + Math.round(currentSecondsFor(t.id) / 60), 0)
 
-  if (loading) {
+  // Resumen de rendimiento del bloque:
+  // compara solo tareas cerradas/completadas, no pendientes.
+  const finishedTasks = focusTasks.filter(t => isClosed(t))
+  const estimatedFinished = finishedTasks.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+  const realFinished = finishedTasks.reduce((s, t) => s + Math.round(currentSecondsFor(t.id) / 60), 0)
+  const finishedDiff = realFinished - estimatedFinished
+
+  const activeEstimated = activeTask ? (activeTask.tiempo_estimado || 0) : 0
+  const activeReal = activeTask ? Math.round(activeSeconds / 60) : 0
+  const activeDiff = activeTask ? activeReal - activeEstimated : 0
+  const completedCount = focusTasks.filter(t => isDone(t)).length
+  const blockTone = totalEstimated <= 60 ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : totalEstimated <= 80 ? 'text-amber-600 bg-amber-50 border-amber-100' : 'text-red-500 bg-red-50 border-red-100'
+
+  if (!hydrated) {
     return (
-      <div className="flex items-center justify-center py-20 text-gray-300">
-        <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin mr-3"></div>
-        Cargando ejecución...
+      <div className="flex items-center justify-center py-20 text-gray-300 text-sm">
+        Cargando bloque...
       </div>
     )
   }
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-4 gap-4">
-        <div className="border border-gray-100 rounded-xl p-4">
-          <div className="text-xl font-bold text-gray-900">{minToHM(jornadaMin)}</div>
-          <div className="text-xs font-semibold text-gray-500 mt-1">Jornada planificada</div>
-        </div>
-        <div className="border border-gray-100 rounded-xl p-4">
-          <div className="text-xl font-bold text-gray-900">{minToHM(estimadoHoy)}</div>
-          <div className="text-xs font-semibold text-gray-500 mt-1">Estimado pendiente</div>
-        </div>
-        <div className="border border-gray-100 rounded-xl p-4">
-          <div className="text-xl font-bold text-gray-900">{minToHM(realVivo)}</div>
-          <div className="text-xs font-semibold text-gray-500 mt-1">Real tareas</div>
-        </div>
-        <div className={`border rounded-xl p-4 ${margen >= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
-          <div className={`text-xl font-bold ${margen >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{signedMinToHM(margen)}</div>
-          <div className="text-xs font-semibold text-gray-500 mt-1">Llegas / no llegas</div>
-        </div>
-      </div>
-
-      <div className="border border-gray-100 rounded-xl bg-white overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
-          <div>
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ejecución</div>
-            <div className="text-xs text-gray-400 mt-1">
-              Foco por tareas <span className="font-semibold text-gray-500">En progreso</span>. Al completar, se guarda el tiempo real por tramo.
+    <div className="space-y-6">
+      <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(360px,0.9fr)] gap-6 items-start">
+        <section className="border border-gray-100 rounded-2xl bg-white overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-wider font-bold text-gray-500">Tarea actual</div>
+              <div className="text-xs text-gray-400 mt-1">Un cronómetro por tarea. Al cambiar, se guarda el tiempo acumulado.</div>
             </div>
+            {activeTask && <button onClick={() => onEditTarea?.(activeTask.id)} className="text-xs border border-gray-200 px-3 py-1.5 rounded-lg text-gray-500 hover:bg-gray-50">Abrir tarea</button>}
           </div>
 
-          <div className="flex items-center gap-2">
-            {foco.length > 0 && (
-              <>
-                <button
-                  onClick={toggleRunning}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${running ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-gray-900 text-white hover:bg-gray-700'}`}
-                >
-                  {running ? 'Pausar' : elapsedSeconds > 0 ? 'Reanudar' : 'Iniciar'}
-                </button>
-
-                <button
-                  onClick={resetTimer}
-                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-400 hover:bg-gray-50 transition"
-                >
-                  ↺
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="p-5 grid grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
-          <div>
-            <div className="flex items-end justify-between mb-4">
-              <div>
-                <div className={`text-5xl font-mono font-bold tracking-tight ${timerTone}`}>
-                  {foco.length === 0 ? '00:00' : secondsToClock(remainingSeconds)}
+          <div className="p-7">
+            {focusTasks.length > 0 && (
+              <div className="grid grid-cols-3 gap-3 mb-7">
+                <div className="border border-gray-100 rounded-xl px-4 py-3">
+                  <div className="text-xl font-bold text-gray-900">{minToHM(estimatedFinished)}</div>
+                  <div className="text-xs text-gray-400">Estimado completadas</div>
                 </div>
-                <div className="text-xs text-gray-400 mt-2">
-                  {foco.length === 0
-                    ? 'Sin tareas en foco'
-                    : `${minToHM(elapsedMin)} consumidos · ${minToHM(totalFocoMin)} estimados`}
+                <div className="border border-gray-100 rounded-xl px-4 py-3">
+                  <div className="text-xl font-bold text-gray-900">{minToHM(realFinished)}</div>
+                  <div className="text-xs text-gray-400">Real completadas</div>
                 </div>
-              </div>
-
-              {overSeconds > 0 && (
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-red-500">+{minToHM(Math.ceil(overSeconds / 60))}</div>
-                  <div className="text-xs text-gray-400">sobre estimación</div>
-                </div>
-              )}
-            </div>
-
-            <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-5">
-              <div className={`h-full rounded-full transition-all ${barTone}`} style={{width: `${usedPct}%`}}></div>
-            </div>
-
-            <div className="border border-gray-100 rounded-xl p-6">
-              <div className="flex items-start justify-between mb-5 gap-6">
-                <div>
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ritmo del día</div>
-                  <div className="text-xs text-gray-400 mt-1">Estimado vs real y margen de jornada.</div>
-                </div>
-
-                <div className={`text-sm font-bold whitespace-nowrap ${jornadaRestante >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  Jornada {signedMinToHM(jornadaRestante)}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 mb-5 text-xs">
-                <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2">
-                  <div className="flex items-center gap-2 font-semibold text-violet-700"><span className="w-3 h-0.5 bg-violet-400 inline-block"></span>Jornada restante</div>
-                  <div className="text-violet-400 mt-1">Horas que te quedan según el cronómetro general.</div>
-                </div>
-                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
-                  <div className="flex items-center gap-2 font-semibold text-amber-700"><span className="w-3 h-0.5 bg-amber-500 inline-block"></span>Estimado pendiente</div>
-                  <div className="text-amber-500 mt-1">Tiempo estimado aún no completado.</div>
-                </div>
-                <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
-                  <div className="flex items-center gap-2 font-semibold text-emerald-700"><span className="w-3 h-0.5 bg-emerald-500 inline-block"></span>Estimado completado</div>
-                  <div className="text-emerald-500 mt-1">Estimado que ya has completado.</div>
-                </div>
-                <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                  <div className="flex items-center gap-2 font-semibold text-gray-700"><span className="w-3 h-0.5 bg-gray-400 inline-block"></span>Real acumulado</div>
-                  <div className="text-gray-400 mt-1">Real completado + foco activo.</div>
-                </div>
-              </div>
-
-              <div className="relative overflow-visible">
-                <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-[360px] overflow-visible">
-                  <line x1={pad} y1={height-pad} x2={width-pad} y2={height-pad} stroke="#e5e7eb" />
-                  <line x1={pad} y1={pad} x2={pad} y2={height-pad} stroke="#e5e7eb" />
-
-                  {[0.25,0.5,0.75,1].map(v => {
-                    const y = sy(chartMaxY * v)
-                    return (
-                      <g key={v}>
-                        <line x1={pad} y1={y} x2={width-pad} y2={y} stroke="#f3f4f6" />
-                        <text x={pad - 12} y={y + 4} textAnchor="end" className="fill-gray-300 text-[11px]">{minToHM(chartMaxY * v)}</text>
-                      </g>
-                    )
-                  })}
-
-                  <path d={jornadaRestantePath} fill="none" stroke="#a78bfa" strokeWidth="3" strokeLinecap="round" />
-                  <path d={estimatedTodayPath} fill="none" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round" />
-                  <path d={estimatedCompletedPath} fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" />
-                  <path d={realPath} fill="none" stroke="#9ca3af" strokeWidth="3" strokeLinecap="round" />
-
-                  {[
-                    { label: 'Jornada restante', value: signedMinToHM(jornadaRestante), cx: sx(realVivo), cy: sy(jornadaRestante), color: '#a78bfa' },
-                    { label: 'Estimado pendiente', value: minToHM(estimadoHoy), cx: sx(realVivo), cy: sy(estimadoHoy), color: '#f59e0b' },
-                    { label: 'Estimado completado', value: minToHM(estimadoCompletado), cx: sx(realVivo), cy: sy(estimadoCompletado), color: '#10b981' },
-                    { label: 'Real acumulado', value: minToHM(realVivo), cx: sx(realVivo), cy: sy(realVivo), color: '#9ca3af' },
-                  ].map(p => (
-                    <circle
-                      key={p.label}
-                      cx={p.cx}
-                      cy={p.cy}
-                      r="7"
-                      fill={p.color}
-                      className="cursor-pointer"
-                      onMouseEnter={() => setHoverPoint({ label: p.label, value: p.value, x: p.cx, y: p.cy, color: p.color })}
-                      onMouseMove={() => setHoverPoint({ label: p.label, value: p.value, x: p.cx, y: p.cy, color: p.color })}
-                      onMouseLeave={() => setHoverPoint(null)}
-                    />
-                  ))}
-
-                  <text x={pad} y={height - 18} className="fill-gray-300 text-[11px]">0</text>
-                  <text x={width - pad} y={height - 18} textAnchor="end" className="fill-gray-300 text-[11px]">{minToHM(chartMaxX)}</text>
-                  <text x={pad} y={height - 4} className="fill-gray-300 text-[10px]">tiempo real</text>
-                </svg>
-
-                {hoverPoint && (
-                  <div
-                    className="absolute z-20 pointer-events-none rounded-lg border border-gray-100 bg-white shadow-lg px-3 py-2 text-xs"
-                    style={{
-                      left: `calc(${(hoverPoint.x / width) * 100}% + 10px)`,
-                      top: `calc(${(hoverPoint.y / height) * 100}% - 10px)`,
-                    }}
-                  >
-                    <div className="flex items-center gap-2 font-semibold text-gray-700">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: hoverPoint.color }}></span>
-                      {hoverPoint.label}
-                    </div>
-                    <div className="text-gray-400 mt-1">{hoverPoint.value}</div>
+                <div className={`border rounded-xl px-4 py-3 ${finishedDiff <= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
+                  <div className={`text-xl font-bold ${finishedDiff <= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {finishedDiff === 0 ? '=' : finishedDiff > 0 ? `+${minToHM(finishedDiff)}` : `-${minToHM(Math.abs(finishedDiff))}`}
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="border border-gray-100 rounded-xl bg-white overflow-hidden">
-            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Foco</span>
-              <span className="text-xs text-gray-400">{foco.length} tarea{foco.length !== 1 ? 's' : ''}</span>
-            </div>
-
-            {foco.length === 0 ? (
-              <div className="p-5 text-sm text-gray-400">
-                Marca una o varias tareas como <span className="font-semibold text-gray-500">En progreso</span> desde el Plan del día.
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {foco.map(t => {
-                  const done = t.done || t.estado === 'Completada'
-                  return (
-                    <div key={t.id} className={`p-4 transition ${done ? 'bg-emerald-50/40' : 'hover:bg-gray-50/70'}`}>
-                      <div className="flex items-start gap-3">
-                        <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${done ? 'bg-emerald-400' : TIPO_DOT[t.tipo] || 'bg-gray-300'}`}></span>
-
-                        <div className="min-w-0 flex-1">
-                          <div className={`text-sm font-semibold truncate ${done ? 'text-emerald-700 line-through decoration-emerald-300' : 'text-gray-900'}`} title={t.tarea}>
-                            {shortTaskName(t.tarea)}
-                          </div>
-                          <div className="text-xs text-gray-400 mt-0.5">
-                            {done ? `Completada · real ${minToHM(t.tiempo_real || 0)} · estimada ${minToHM(t.tiempo_estimado || 0)}` : `${t.tipo} · ${minToHM(t.tiempo_estimado || 0)}`}
-                          </div>
-                        </div>
-
-                        {!done && (
-                          <button
-                            onClick={() => completar(t)}
-                            className="px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-semibold hover:bg-gray-700 transition flex-shrink-0"
-                          >
-                            Completar
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between mt-3">
-                        <button onClick={() => onEditTarea?.(t.id)} className="text-xs text-gray-400 hover:text-gray-700 transition">
-                          Abrir
-                        </button>
-
-                        <button onClick={() => quitarDeFoco(t)} className="text-xs text-gray-300 hover:text-gray-500 transition">
-                          Quitar de foco
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
+                  <div className="text-xs text-gray-400">Diferencia completadas</div>
+                </div>
               </div>
             )}
+
+            {activeTask ? (
+              <>
+                <div className="mb-8">
+                  <div className="flex items-center gap-2 mb-3"><span className={`w-2 h-2 rounded-full ${TIPO_DOT[activeTask.tipo] || 'bg-gray-300'}`} /><span className="text-xs text-gray-400 font-semibold">{activeTask.tipo} · estimada {minToHM(activeTask.tiempo_estimado || 0)}</span></div>
+                  <h2 className="text-2xl font-bold text-gray-900 leading-tight max-w-3xl">{activeTask.tarea}</h2>
+                  {activeTask.notas && <p className="text-sm text-gray-400 mt-2">{activeTask.notas}</p>}
+                </div>
+
+                <div className="mb-8"><div className="text-7xl font-mono font-bold tracking-tight text-gray-900">{secondsToClock(activeSeconds)}</div><div className="text-sm text-gray-400 mt-2">acumulado en esta tarea · real guardado {minToHM(Math.round(activeSeconds / 60))}</div></div>
+
+                <div className="flex items-center gap-3">
+                  {store.running && store.activeId === activeTask.id ? <button onClick={pauseActive} className="px-5 py-3 rounded-xl bg-amber-500 text-white font-semibold text-sm hover:bg-amber-600">Pausar</button> : <button onClick={resumeActive} className="px-5 py-3 rounded-xl bg-gray-900 text-white font-semibold text-sm hover:bg-gray-700">Reanudar</button>}
+                  <button onClick={() => completeTask(activeTask.id)} className="px-5 py-3 rounded-xl bg-emerald-500 text-white font-semibold text-sm hover:bg-emerald-600">Completar</button>
+                </div>
+              </>
+            ) : (
+              <div onDragOver={e => e.preventDefault()} onDrop={onDropIntoBlock} className="min-h-[360px] rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-center px-10">
+                <div className="text-5xl mb-4">🎯</div><h2 className="text-xl font-bold text-gray-900">Elige una tarea del bloque</h2><p className="text-sm text-gray-400 mt-2 max-w-md">Arrastra una tarea desde el Plan del día o pulsa “Empezar” en el bloque. La tarea quedará en progreso y el tiempo se guardará aunque cambies de tarea.</p>
+              </div>
+            )}
+
+            {focusTasks.length > 0 && <div className="mt-10 border-t border-gray-100 pt-5"><div className="flex items-center justify-between mb-3"><div className="text-xs uppercase tracking-wider font-bold text-gray-500">Sesión del bloque</div><div className="text-xs text-gray-400">{completedCount}/{focusTasks.length} completadas · {minToHM(totalReal)} real</div></div><div className="space-y-2">{focusTasks.map(t => { const seconds = currentSecondsFor(t.id); const active = t.id === store.activeId; const closed = isClosed(t); return <button key={t.id} onClick={() => !closed && startTask(t.id)} className={`w-full text-left flex items-center justify-between gap-3 px-4 py-3 rounded-xl border transition ${active ? 'border-gray-900 bg-gray-50' : closed ? 'border-gray-100 bg-white opacity-60' : 'border-gray-100 bg-white hover:bg-gray-50'}`}><div className="min-w-0"><div className={`text-sm font-semibold truncate ${closed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{closed ? '✓ ' : active ? '⏳ ' : '○ '}{t.tarea}</div><div className="text-xs text-gray-400 mt-0.5">{t.tipo} · estimada {minToHM(t.tiempo_estimado || 0)}</div></div><div className="text-sm font-mono font-bold text-gray-700">{secondsToClock(seconds)}</div></button> })}</div></div>}
           </div>
-        </div>
+        </section>
+
+        <aside className="space-y-5">
+          <section onDragOver={e => e.preventDefault()} onDrop={onDropIntoBlock} className="border border-gray-100 rounded-2xl bg-white overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between"><div><div className="text-xs uppercase tracking-wider font-bold text-gray-500">Bloque actual</div><div className="text-xs text-gray-400 mt-1">Arrastra aquí 4-6 tareas hasta montar 60-80 min.</div></div><div className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${blockTone}`}>{minToHM(totalEstimated)}</div></div>
+            <div className="p-4">
+{focusTasks.length === 0 ? <div className="border-2 border-dashed border-gray-200 rounded-xl py-12 text-center text-gray-300 text-sm">Arrastra tareas aquí</div> : <div className="space-y-2">{focusTasks.map(t => { const active = t.id === store.activeId; const closed = isClosed(t); const seconds = currentSecondsFor(t.id); return <div key={t.id} className={`rounded-xl border p-3 transition ${active ? 'border-gray-900 bg-gray-50' : closed ? 'border-gray-100 bg-gray-50/50' : 'border-gray-100 bg-white'}`}><div className="flex items-start justify-between gap-3"><button onClick={() => !closed && startTask(t.id)} className="min-w-0 text-left flex-1"><div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${closed ? 'bg-emerald-400' : active ? 'bg-gray-900' : TIPO_DOT[t.tipo] || 'bg-gray-300'}`} /><span className={`text-sm font-semibold truncate ${closed ? 'line-through text-gray-400' : 'text-gray-900'}`}>{t.tarea}</span></div><div className="text-xs text-gray-400 mt-1 ml-4">{t.tipo} · estimada {minToHM(t.tiempo_estimado || 0)} · real {seconds > 0 ? minToHM(Math.round(seconds / 60)) : '0m'}</div></button>{!closed && <button onClick={() => completeTask(t.id)} className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-lg font-semibold hover:bg-gray-700">Completar</button>}</div><div className="flex items-center justify-between mt-3 ml-4">{!closed ? <button onClick={() => startTask(t.id)} className="text-xs text-gray-500 hover:text-gray-900">{active ? 'Activa' : 'Empezar'}</button> : <span className="text-xs text-emerald-500 font-semibold">Completada</span>}<button onClick={() => removeFromBlock(t.id)} className="text-xs text-gray-300 hover:text-red-400">Quitar</button></div></div> })}</div>}
+              <div className="mt-4"><button onClick={resetBlock} className="w-full text-xs border border-gray-200 text-gray-600 px-3 py-2.5 rounded-lg hover:bg-gray-50 font-medium">Cerrar bloque</button></div>
+            </div>
+          </section>
+
+          <section className="border border-gray-100 rounded-2xl bg-white overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100"><div className="text-xs uppercase tracking-wider font-bold text-gray-500">Plan del día</div><div className="text-xs text-gray-400 mt-1">Añade solo las próximas tareas del bloque.</div></div>
+            <div className="max-h-[520px] overflow-y-auto p-3 space-y-2">{loading ? <div className="py-10 text-center text-gray-300 text-sm">Cargando...</div> : candidateTasks.length === 0 ? <div className="py-10 text-center text-gray-300 text-sm">No hay tareas pendientes para añadir</div> : candidateTasks.map(t => <div key={t.id} draggable onDragStart={e => { setDragId(t.id); e.dataTransfer.setData('text/plain', String(t.id)) }} className="rounded-xl border border-gray-100 px-3 py-3 hover:bg-gray-50 cursor-grab"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${TIPO_DOT[t.tipo] || 'bg-gray-300'}`} /><div className="text-sm font-semibold text-gray-800 truncate">{t.tarea}</div></div><div className="text-xs text-gray-400 mt-1 ml-4">{t.tipo} · {minToHM(t.tiempo_estimado || 0)}</div></div><button onClick={() => addToBlock(t)} className="text-xs border border-gray-200 px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-white">Añadir</button></div></div>)}</div>
+          </section>
+        </aside>
       </div>
     </div>
   )

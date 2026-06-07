@@ -261,6 +261,32 @@ function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPau
         </div>
       </div>
 
+      {(() => {
+        const completadas = filtered.filter((t: any) => t.done || t.estado === 'Completada')
+        const estCompletadas = completadas.reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
+        const realCompletadas = completadas.reduce((s: number, t: any) => s + (t.tiempo_real || 0), 0)
+        const diffCompletadas = realCompletadas - estCompletadas
+
+        return (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="border border-gray-100 rounded-xl px-4 py-3 bg-white">
+              <div className="text-lg font-bold text-gray-900">{minToHM(estCompletadas)}</div>
+              <div className="text-xs text-gray-400">Estimado completadas</div>
+            </div>
+            <div className="border border-gray-100 rounded-xl px-4 py-3 bg-white">
+              <div className="text-lg font-bold text-gray-900">{minToHM(realCompletadas)}</div>
+              <div className="text-xs text-gray-400">Real completadas</div>
+            </div>
+            <div className={`border rounded-xl px-4 py-3 ${diffCompletadas <= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
+              <div className={`text-lg font-bold ${diffCompletadas <= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                {diffCompletadas === 0 ? '=' : diffCompletadas > 0 ? `+${minToHM(diffCompletadas)}` : `-${minToHM(Math.abs(diffCompletadas))}`}
+              </div>
+              <div className="text-xs text-gray-400">Diferencia completadas</div>
+            </div>
+          </div>
+        )
+      })()}
+
       <div className="grid grid-cols-4 gap-5">
         <div className="border border-gray-100 rounded-xl p-5 hover:border-gray-200 transition">
           <div className="text-2xl font-bold text-gray-900 mb-1">{hechas}<span className="text-gray-300 text-lg font-normal">/{total}</span></div>
@@ -628,14 +654,53 @@ export default function Home() {
   }, [tab, mounted])
 
   useEffect(() => {
+    if (!mounted) return
+    if (tab === 'Plan') fetchTareas()
+  }, [tab, mounted])
+
+  useEffect(() => {
     const running = localStorage.getItem('gestor_crono_running') === 'true'
     const startedAt = parseInt(localStorage.getItem('gestor_crono_started_at') || '0') || 0
-    const storedSeconds = parseInt(localStorage.getItem('gestor_crono_seconds') || '0') || 0
+    const baseSeconds = parseInt(localStorage.getItem('gestor_crono_base_seconds') || localStorage.getItem('gestor_crono_seconds') || '0') || 0
+    const liveSeconds = parseInt(localStorage.getItem('gestor_crono_seconds_live') || '0') || 0
+    const savedDate = localStorage.getItem('gestor_crono_date') || today
+
+    const elapsed = running && startedAt > 0
+      ? Math.floor((Date.now() - startedAt) / 1000)
+      : 0
+
+    const total = running && startedAt > 0
+      ? Math.max(0, liveSeconds, baseSeconds + elapsed)
+      : Math.max(0, liveSeconds, baseSeconds)
+
+    // Si ha cambiado el día, guardamos el fichaje del día anterior y reseteamos.
+    if (savedDate !== today) {
+      if (total > 0) {
+        supabase.from('jornadas').upsert(
+          { fecha: savedDate, minutos_fichados: Math.floor(total / 60) },
+          { onConflict: 'fecha' }
+        )
+      }
+
+      if (cronoRef.current) clearInterval(cronoRef.current)
+
+      localStorage.setItem('gestor_crono_date', today)
+      localStorage.setItem('gestor_crono_running', 'false')
+      localStorage.setItem('gestor_crono_seconds', '0')
+      localStorage.setItem('gestor_crono_base_seconds', '0')
+      localStorage.removeItem('gestor_crono_started_at')
+      localStorage.removeItem('gestor_crono_seconds_live')
+      localStorage.removeItem('gestor_crono_manual_start')
+
+      setCronoRunning(false)
+      setCronoSeconds(0)
+      cronoStartRef.current = null
+      return
+    }
+
+    localStorage.setItem('gestor_crono_date', today)
 
     if (running && startedAt > 0) {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
-      const total = Math.max(0, storedSeconds + elapsed)
-
       setCronoSeconds(total)
       cronoStartRef.current = Date.now() - total * 1000
 
@@ -647,6 +712,8 @@ export default function Home() {
       }, 1000)
 
       setCronoRunning(true)
+    } else {
+      setCronoSeconds(total)
     }
   }, [])
 
@@ -678,8 +745,10 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    if (cronoRunning) return
     localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-  }, [cronoSeconds])
+    localStorage.setItem('gestor_crono_base_seconds', String(cronoSeconds))
+  })
 
   useEffect(() => {
     if (!fragmentModal) return
@@ -824,7 +893,23 @@ export default function Home() {
   const displayFiltered = tab === 'Plan'
     ? [
         ...filtered.filter(t => !isInactiveForPlan(t)),
-        ...filtered.filter(t => isInactiveForPlan(t)),
+        ...filtered
+          .filter(t => isInactiveForPlan(t))
+          .sort((a, b) => {
+            const aTime = String((a as any).hora_finalizacion || '')
+            const bTime = String((b as any).hora_finalizacion || '')
+            const aDate = cleanDateValue((a as any).fecha_finalizacion)
+            const bDate = cleanDateValue((b as any).fecha_finalizacion)
+
+            // Completadas/omitidas abajo, ordenadas por finalización:
+            // primera terminada arriba, última terminada abajo.
+            const aKey = `${aDate}T${aTime}`
+            const bKey = `${bDate}T${bTime}`
+
+            if (aKey < bKey) return -1
+            if (aKey > bKey) return 1
+            return ((a as any).id || 0) - ((b as any).id || 0)
+          }),
       ]
     : filtered
 
@@ -1122,16 +1207,19 @@ export default function Home() {
   function startCrono() {
     if (cronoRunning) return
 
-    cronoStartRef.current = Date.now() - cronoSeconds * 1000
+    const startedAt = Date.now()
+    cronoStartRef.current = startedAt - cronoSeconds * 1000
 
+    localStorage.setItem('gestor_crono_date', today)
     localStorage.setItem('gestor_crono_running', 'true')
+    localStorage.setItem('gestor_crono_base_seconds', String(cronoSeconds))
     localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-    localStorage.setItem('gestor_crono_started_at', String(Date.now()))
+    localStorage.setItem('gestor_crono_started_at', String(startedAt))
 
     cronoRef.current = setInterval(() => {
       const next = Math.floor((Date.now() - cronoStartRef.current!) / 1000)
       setCronoSeconds(next)
-      localStorage.setItem('gestor_crono_seconds', String(next))
+      localStorage.setItem('gestor_crono_seconds_live', String(next))
     }, 1000)
 
     setCronoRunning(true)
@@ -1146,28 +1234,63 @@ export default function Home() {
     const startDate = new Date()
     startDate.setHours(h, m, 0, 0)
     const elapsedSecs = Math.max(0, Math.floor((now.getTime() - startDate.getTime()) / 1000))
+
+    // Guardamos la hora manual de inicio para que, si luego marcas una hora de fin,
+    // el cronómetro sea exactamente Fin - Inicio y no arrastre acumulados anteriores.
+    localStorage.setItem('gestor_crono_date', today)
+    localStorage.setItem('gestor_crono_manual_start', hhmm)
+
     setCronoSeconds(elapsedSecs)
     localStorage.setItem('gestor_crono_seconds', String(elapsedSecs))
+    localStorage.setItem('gestor_crono_base_seconds', String(elapsedSecs))
     if (cronoRunning) {
       // Re-anchor running timer
       cronoStartRef.current = Date.now() - elapsedSecs * 1000
+      const startedAt = Date.now()
       localStorage.setItem('gestor_crono_running', 'true')
-      localStorage.setItem('gestor_crono_started_at', String(Date.now() - elapsedSecs * 1000))
+      localStorage.setItem('gestor_crono_base_seconds', String(elapsedSecs))
+      localStorage.setItem('gestor_crono_started_at', String(startedAt))
     }
   }
 
-  // Ajustar cronómetro según hora de fin de fichaje real
+  // Ajustar cronómetro según hora de fin real.
+  // Si antes has puesto hora de Inicio, calcula exactamente Fin - Inicio.
+  // Así evita arrastrar segundos acumulados antiguos del localStorage.
   function adjustCronoToEnd(hhmm: string) {
     if (!hhmm) return
     const [h, m] = hhmm.split(':').map(Number)
     if (isNaN(h) || isNaN(m)) return
 
-    const now = new Date()
-    const endDate = new Date()
-    endDate.setHours(h, m, 0, 0)
+    const manualStart = localStorage.getItem('gestor_crono_manual_start')
 
-    const secondsAfterEnd = Math.max(0, Math.floor((now.getTime() - endDate.getTime()) / 1000))
-    const adjusted = Math.max(0, cronoSeconds - secondsAfterEnd)
+    let adjusted = 0
+
+    if (manualStart) {
+      const [sh, sm] = manualStart.split(':').map(Number)
+      if (!isNaN(sh) && !isNaN(sm)) {
+        const startDate = new Date()
+        startDate.setHours(sh, sm, 0, 0)
+
+        const endDate = new Date()
+        endDate.setHours(h, m, 0, 0)
+
+        // Por si alguna vez marcas un fin pasada medianoche.
+        if (endDate.getTime() < startDate.getTime()) {
+          endDate.setDate(endDate.getDate() + 1)
+        }
+
+        adjusted = Math.max(0, Math.floor((endDate.getTime() - startDate.getTime()) / 1000))
+      }
+    }
+
+    if (!manualStart) {
+      const now = new Date()
+      const endDate = new Date()
+      endDate.setHours(h, m, 0, 0)
+
+      const secondsAfterEnd = Math.max(0, Math.floor((now.getTime() - endDate.getTime()) / 1000))
+      adjusted = Math.max(0, cronoSeconds - secondsAfterEnd)
+    }
 
     if (cronoRef.current) clearInterval(cronoRef.current)
 
@@ -1177,7 +1300,10 @@ export default function Home() {
 
     localStorage.setItem('gestor_crono_running', 'false')
     localStorage.setItem('gestor_crono_seconds', String(adjusted))
+    localStorage.setItem('gestor_crono_base_seconds', String(adjusted))
     localStorage.removeItem('gestor_crono_started_at')
+    localStorage.removeItem('gestor_crono_seconds_live')
+    localStorage.removeItem('gestor_crono_manual_start')
 
     saveCronoToday(Math.floor(adjusted / 60))
   }
@@ -1185,9 +1311,12 @@ export default function Home() {
   function pauseCrono() {
     if (cronoRef.current) clearInterval(cronoRef.current)
 
+    localStorage.setItem('gestor_crono_date', today)
     localStorage.setItem('gestor_crono_running', 'false')
     localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
+    localStorage.setItem('gestor_crono_base_seconds', String(cronoSeconds))
     localStorage.removeItem('gestor_crono_started_at')
+    localStorage.removeItem('gestor_crono_seconds_live')
 
     setCronoRunning(false)
     saveCronoToday(Math.floor(cronoSeconds / 60))
@@ -1196,9 +1325,12 @@ export default function Home() {
   function resetCrono() {
     if (cronoRef.current) clearInterval(cronoRef.current)
 
+    localStorage.setItem('gestor_crono_date', today)
     localStorage.setItem('gestor_crono_running', 'false')
     localStorage.setItem('gestor_crono_seconds', '0')
+    localStorage.setItem('gestor_crono_base_seconds', '0')
     localStorage.removeItem('gestor_crono_started_at')
+    localStorage.removeItem('gestor_crono_seconds_live')
 
     setCronoRunning(false)
     setCronoSeconds(0)
@@ -1206,6 +1338,7 @@ export default function Home() {
   }
 
   async function saveCronoToday(minutos: number) {
+    localStorage.setItem('gestor_crono_date', today)
     await supabase.from('jornadas').upsert(
       { fecha: today, minutos_fichados: minutos },
       { onConflict: 'fecha' }
@@ -1266,6 +1399,187 @@ export default function Home() {
   function openNew() {
     setForm({ ...empty, tipo: TIPOS_FORM.includes(tab) ? tab : 'Operativa' })
     setErrors({}); setEditId(null); setModal(true)
+  }
+
+  function downloadHojaTrabajo() {
+    const rows = Array.from({ length: 12 }, (_, i) => `
+      <tr>
+        <td class="idx">${i + 1}</td>
+        <td class="task"></td>
+        <td class="time"></td>
+        <td class="time"></td>
+      </tr>
+    `).join('')
+
+    const html = `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Hoja de tareas</title>
+<style>
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #111;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  body {
+    width: 210mm;
+    min-height: 297mm;
+  }
+
+  .page {
+    width: 100%;
+    padding: 6mm 8mm 4mm 8mm;
+  }
+
+  .top {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20mm;
+    border-bottom: 2.5px solid #111;
+    padding-bottom: 7mm;
+    margin-bottom: 8mm;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .date {
+    font-size: 13px;
+    white-space: nowrap;
+    padding-bottom: 1mm;
+  }
+
+  .date span {
+    display: inline-block;
+    width: 48mm;
+    border-bottom: 1.4px solid #111;
+    height: 7mm;
+    vertical-align: bottom;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  th {
+    border: 1.3px solid #111;
+    height: 9mm;
+    padding: 2mm 3mm;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  td {
+    border: 1px solid #555;
+    height: 17.7mm;
+    padding: 2mm 3mm;
+    vertical-align: top;
+    font-size: 12px;
+  }
+
+  .idx {
+    width: 9mm;
+    text-align: center;
+    vertical-align: middle;
+    font-size: 13px;
+    color: #111;
+    padding: 0;
+  }
+
+  .task {
+    width: auto;
+  }
+
+  .time {
+    width: 23mm;
+  }
+
+  @media print {
+    html, body {
+      width: 210mm;
+      height: 297mm;
+    }
+
+    body {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .page {
+      page-break-after: avoid;
+    }
+  }
+</style>
+</head>
+<body>
+  <main class="page">
+    <section class="top">
+      <h1>Hoja de tareas</h1>
+      <div class="date">Fecha: <span></span></div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:9mm;text-align:center;">#</th>
+          <th>Tarea / notas</th>
+          <th style="width:23mm;">Est.</th>
+          <th style="width:23mm;">Real</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </main>
+
+  <script>
+    window.onload = () => {
+      window.focus()
+      window.print()
+    }
+  </script>
+</body>
+</html>`
+
+    const printWindow = window.open('', '_blank', 'width=900,height=1200')
+    if (!printWindow) {
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'hoja_de_tareas.html'
+      a.click()
+      URL.revokeObjectURL(url)
+      return
+    }
+
+    printWindow.document.open()
+    printWindow.document.write(html)
+    printWindow.document.close()
   }
 
   function downloadMaster() {
@@ -1467,6 +1781,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             {mounted && <>
               <button onClick={downloadMaster} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Maestro</button>
+              <button onClick={downloadHojaTrabajo} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">Hoja de trabajo</button>
               <button onClick={()=>{setImportResult(null);setImportModal(true)}} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↑ Importar</button>
               <button onClick={exportCSV} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Exportar</button>
               {tab === 'Plan' && filtered.some(t => (t.done===true||(t.done as any)==='true'||t.estado==='Completada'||t.estado==='Omitida') && t.fecha_finalizacion===today) && (

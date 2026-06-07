@@ -19,7 +19,7 @@ type Tarea = {
 
 type Jornada = {
   fecha: string
-  minutos_fichados: number
+  minutos_s: number
 }
 
 const TIPO_COLORS: Record<string, string> = {
@@ -92,12 +92,25 @@ type Props = {
 export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const [allTareas, setAllTareas] = useState<Tarea[]>([])
   const [jornadas, setJornadas] = useState<Record<string, number>>({})
+  const [capacityOverrides, setCapacityOverrides] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      return JSON.parse(localStorage.getItem('carga_capacity_overrides') || '{}')
+    } catch {
+      return {}
+    }
+  })
   const [loading, setLoading] = useState(true)
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
   const [soloLaborables, setSoloLaborables] = useState(false)
   const [editingJornada, setEditingJornada] = useState<string | null>(null)
   const [jornadaInput, setJornadaInput] = useState('')
   const [savingJornada, setSavingJornada] = useState(false)
+  const [editingCapacity, setEditingCapacity] = useState<string | null>(null)
+  const [capacityInput, setCapacityInput] = useState('')
+  const [editingPlanDateId, setEditingPlanDateId] = useState<number | null>(null)
+  const [planDateInput, setPlanDateInput] = useState('')
+  const [savingPlanDate, setSavingPlanDate] = useState(false)
   const [tipoFilter, setTipoFilter] = useState<string[]>(() => {
     if (typeof window === 'undefined') return TIPOS_FILTRO
     try {
@@ -126,7 +139,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
       supabase
         .from('tareas')
         .select('id,tipo,tarea,estado,tiempo_estimado,deadline,fecha_planificada,done,es_padre,es_fragmento,parent_id'),
-      supabase.from('jornadas').select('fecha,minutos_fichados')
+      supabase.from('jornadas').select('fecha,minutos_s')
     ])
 
     if (tError) {
@@ -137,7 +150,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     }
 
     const jMap: Record<string, number> = {}
-    ;(j || []).forEach((row: Jornada) => { jMap[row.fecha] = row.minutos_fichados })
+    ;(j || []).forEach((row: Jornada) => { jMap[row.fecha] = row.minutos_s })
     setJornadas(jMap)
     setLoading(false)
   }, [])
@@ -156,16 +169,63 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     localStorage.setItem('carga_atraso_filter', atrasoFilter)
   }, [atrasoFilter])
 
+  useEffect(() => {
+    localStorage.setItem('carga_capacity_overrides', JSON.stringify(capacityOverrides))
+  }, [capacityOverrides])
+
+  function defaultCapacityForDate(d: Date): number {
+    // Capacidad por defecto:
+    // L-V = 5h, S-D = 2h.
+    return (d.getDay() === 0 || d.getDay() === 6) ? 120 : 300
+  }
+
+  function capacityForDate(d: Date): number {
+    const key = dateKey(d)
+    return capacityOverrides[key] ?? defaultCapacityForDate(d)
+  }
+
+  function saveCapacity(fecha: string, minutos: number) {
+    const clean = Math.max(0, Math.round(minutos || 0))
+    setCapacityOverrides(prev => ({ ...prev, [fecha]: clean }))
+    setEditingCapacity(null)
+  }
+
+  function resetCapacity(fecha: string) {
+    setCapacityOverrides(prev => {
+      const next = { ...prev }
+      delete next[fecha]
+      return next
+    })
+    setEditingCapacity(null)
+  }
+
   function toggleTipo(tipo: string) {
     setTipoFilter(prev => prev.includes(tipo) ? prev.filter(x => x !== tipo) : [...prev, tipo])
   }
 
   async function saveJornada(fecha: string, minutos: number) {
     setSavingJornada(true)
-    await supabase.from('jornadas').upsert({ fecha, minutos_fichados: minutos }, { onConflict: 'fecha' })
+    await supabase.from('jornadas').upsert({ fecha, minutos_s: minutos }, { onConflict: 'fecha' })
     setJornadas(prev => ({ ...prev, [fecha]: minutos }))
     setSavingJornada(false)
     setEditingJornada(null)
+  }
+
+  async function savePlanDate(t: Tarea, fecha: string) {
+    setSavingPlanDate(true)
+    const cleanFecha = fecha || null
+    const { error } = await supabase
+      .from('tareas')
+      .update({ fecha_planificada: cleanFecha })
+      .eq('id', t.id)
+
+    if (error) alert(`No pude guardar la fecha planificada: ${error.message}`)
+    else {
+      setAllTareas(prev => prev.map(x => x.id === t.id ? { ...x, fecha_planificada: cleanFecha } : x))
+      setEditingPlanDateId(null)
+      setPlanDateInput('')
+    }
+    setSavingPlanDate(false)
   }
 
   const tareasBase = allTareas.filter(t => t.es_padre !== true)
@@ -185,6 +245,9 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
 
   const allDays = getAllDaysInMonth(viewYear, viewMonth)
   const workdays = soloLaborables ? allDays.filter(d => d.getDay() !== 0 && d.getDay() !== 6) : allDays
+  const futureWorkdays = workdays.filter(d => dateKey(d) >= todayStr)
+  const capacityByDay: Record<string, number> = {}
+  workdays.forEach(d => { capacityByDay[dateKey(d)] = capacityForDate(d) })
 
   const byDay: Record<string, Tarea[]> = {}
   tareas.forEach(t => {
@@ -223,7 +286,9 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const retrasadasTotalMinReal = retrasadasSinPlanTotal.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
 
   const maxMin = Math.max(480, ...workdays.map(d => {
-    return (byDay[dateKey(d)] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+    const key = dateKey(d)
+    const planned = (byDay[key] || []).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+    return Math.max(planned, capacityByDay[key] || 0)
   }), retrasadasTotalMin)
 
   const isInViewedMonth = (key?: string | null) => {
@@ -240,12 +305,20 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   const retrasadasTotalMinMes = retrasadasSinPlanMes.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
 
   const sinFecha = tareas.filter(t => !planningDate(t))
-  const totalPendiente = tareasMes.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-  const totalPendienteReal = tareasActivasMes.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-  const totalConFecha = tareasMes.filter(t => !!planningDate(t)).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+  const tareasMesFuturas = tareasMes.filter(t => {
+    const key = planningDate(t)
+    return !!key && key >= todayStr
+  })
+  const tareasActivasMesFuturas = tareasActivasMes.filter(t => {
+    const key = planningDate(t)
+    return !!key && key >= todayStr
+  })
+  const totalPendiente = tareasMesFuturas.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+  const totalPendienteReal = tareasActivasMesFuturas.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
+  const totalConFecha = tareasMesFuturas.filter(t => !!planningDate(t)).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
 
-  const mediaPorTarea = tareasMes.length > 0 ? Math.round(totalPendiente / tareasMes.length) : 0
-  const tareasFinSemana = tareasMes.filter(t => {
+  const mediaPorTarea = tareasMesFuturas.length > 0 ? Math.round(totalPendiente / tareasMesFuturas.length) : 0
+  const tareasFinSemana = tareasMesFuturas.filter(t => {
     const key = planningDate(t)
     if (!key) return false
     const d = new Date(`${key}T00:00:00`)
@@ -253,8 +326,40 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
   })
   const totalFinSemana = tareasFinSemana.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
 
-  const totalFichadoMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)
-  const pctOcupacion = totalFichadoMes > 0 ? Math.round((totalPendiente / totalFichadoMes) * 100) : null
+  const totalCapacityMes = futureWorkdays.reduce((s, d) => s + capacityForDate(d), 0)
+  const totalLibreMes = Math.max(0, totalCapacityMes - totalPendiente)
+  const sobrecargaUtil = futureWorkdays.reduce((s, d) => {
+    const key = dateKey(d)
+    const capacity = capacityForDate(d)
+    const planned = ((byDay[key] || []).reduce((sum, t) => sum + (t.tiempo_estimado || 0), 0)) + (key === todayStr ? retrasadasTotalMin : 0)
+
+    // Exceso real sobre la capacidad del día:
+    // L-V 5h, S-D 2h, o la capacidad manual que hayas puesto.
+    return s + Math.max(0, planned - capacity)
+  }, 0)
+  const diasEnRiesgo = futureWorkdays.filter(d => {
+    const key = dateKey(d)
+    const capacity = capacityForDate(d)
+    const planned = ((byDay[key] || []).reduce((sum, t) => sum + (t.tiempo_estimado || 0), 0)) + (key === todayStr ? retrasadasTotalMin : 0)
+    return capacity > 0 && planned > capacity
+  }).length
+  const totalFueraCapacidad = Math.max(0, totalPendiente - totalCapacityMes)
+  const pctCapacidad = totalCapacityMes > 0 ? Math.round((totalPendiente / totalCapacityMes) * 100) : null
+  const diasSinCapacidad = futureWorkdays.filter(d => capacityForDate(d) === 0).length
+
+  const availableSlots = workdays
+    .map(d => {
+      const key = dateKey(d)
+      const planned = ((byDay[key] || []).reduce((s, t) => s + (t.tiempo_estimado || 0), 0)) + (key === todayStr ? retrasadasTotalMin : 0)
+      const capacity = capacityForDate(d)
+      const free = capacity - planned
+      return { key, d, planned, capacity, free }
+    })
+    .filter(x => x.key >= todayStr && x.capacity > 0 && x.free > 0)
+    .slice(0, 8)
+
+  const totalMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)
+  const pctOcupacion = pctCapacidad
   const retrasadasActivasCount = tareasPorTipo.filter(t => isRetrasada(t)).length
   const noRetrasadasActivasCount = tareasPorTipo.filter(t => !isRetrasada(t)).length
 
@@ -277,6 +382,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
 
   function renderTaskRow(t: Tarea, variant: 'normal' | 'overdue' = 'normal') {
     const isOverdue = !!t.deadline && t.deadline < todayStr && !isInactive(t)
+    const isPlanned = !!t.fecha_planificada
     const delayDays = isOverdue && t.deadline ? Math.abs(daysBetween(todayStr, t.deadline)) : 0
 
     return (
@@ -292,7 +398,32 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
           </span>
         )}
 
+        {isPlanned && isOverdue && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500 font-semibold flex-shrink-0" title="Replanificada">
+            plan {fDate(t.fecha_planificada)}
+          </span>
+        )}
+
         <span className="text-xs text-gray-400 flex-shrink-0">{minToHM(t.tiempo_estimado)}</span>
+
+        <div className="flex-shrink-0" onClick={e=>e.stopPropagation()}>
+          {editingPlanDateId === t.id ? (
+            <div className="flex items-center gap-1">
+              <input type="date" value={planDateInput}
+                onChange={e=>setPlanDateInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter')savePlanDate(t,planDateInput);if(e.key==='Escape')setEditingPlanDateId(null)}}
+                className="w-32 border border-gray-300 rounded px-2 py-0.5 text-xs outline-none focus:border-gray-500" autoFocus/>
+              <button onClick={()=>savePlanDate(t,planDateInput)} disabled={savingPlanDate}
+                className="text-xs text-emerald-500 hover:text-emerald-600 font-bold">✓</button>
+            </div>
+          ) : (
+            <button onClick={()=>{setEditingPlanDateId(t.id);setPlanDateInput(t.fecha_planificada || planningDate(t) || todayStr)}}
+              className={`text-[10px] px-2 py-1 rounded-lg border transition ${isPlanned?'border-blue-100 text-blue-500 bg-blue-50 hover:bg-blue-100':'border-dashed border-gray-200 text-gray-300 hover:text-gray-500 hover:border-gray-300'}`}
+              title="Cambiar fecha planificada">
+              {isPlanned ? '📍 replan.' : '+ plan'}
+            </button>
+          )}
+        </div>
 
         <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition flex-shrink-0">✏ editar</span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
@@ -386,26 +517,30 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label:'Tiempo total', val:minToHM(totalPendiente), sub: (allTiposSelected && atrasoFilter === 'todas') ? `${tareasMes.length} tareas` : `${tareasMes.length} filtradas · ${tareasActivasMes.length} total`, tone:'default' },
-          { label:'Media por tarea', val:minToHM(mediaPorTarea), sub: '', tone:'default' },
-          { label:'Fin de semana', val:minToHM(totalFinSemana), sub: `${tareasFinSemana.length} tarea${tareasFinSemana.length!==1?'s':''} en sáb/dom`, tone: totalFinSemana > 0 ? 'weekend' : 'default' },
+          { label:'Capacidad del mes', val:minToHM(totalCapacityMes), sub:'', tone:'default' },
+          { label:'Trabajo planificado', val:minToHM(totalPendiente), sub:'', tone:'default' },
+          { label:'Hueco libre', val:minToHM(totalLibreMes), sub:'', tone: totalLibreMes > 0 ? 'free' : 'default' },
           {
-            label: 'Deuda sin plan',
-            val: minToHM(retrasadasTotalMinMes),
-            sub: `${retrasadasSinPlanMes.length} sin replanificar · ${retrasadasPlanificadasMes.length} replanificadas`,
-            tone: retrasadasSinPlanMes.length > 0 ? 'debt' : 'default'
+            label: 'Sobrecarga',
+            val: sobrecargaUtil > 0 ? minToHM(sobrecargaUtil) : 'OK',
+            sub: '',
+            tone: sobrecargaUtil > 0 ? 'debt' : 'free'
           },
         ].map((s,i)=>{
           const toneClass = s.tone === 'debt'
             ? 'border-violet-200 bg-violet-50'
-            : s.tone === 'weekend'
-              ? 'border-rose-200 bg-rose-50'
-              : 'border-gray-100'
+            : s.tone === 'free'
+              ? 'border-emerald-200 bg-emerald-50'
+              : s.tone === 'weekend'
+                ? 'border-rose-200 bg-rose-50'
+                : 'border-gray-100'
           const valueClass = s.tone === 'debt'
             ? 'text-violet-600'
-            : s.tone === 'weekend'
-              ? 'text-rose-500'
-              : 'text-gray-900'
+            : s.tone === 'free'
+              ? 'text-emerald-600'
+              : s.tone === 'weekend'
+                ? 'text-rose-500'
+                : 'text-gray-900'
           return (
             <div key={i} className={`border rounded-xl p-5 ${toneClass}`}>
               <div className={`text-2xl font-bold mb-1 ${valueClass}`}>{s.val}</div>
@@ -418,7 +553,29 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
 
       {pctOcupacion !== null && (
         <div className="text-xs text-gray-400 -mt-2">
-          Ocupación del mes según fichado: <span className="font-semibold text-gray-600">{pctOcupacion}%</span>
+          Ocupación del mes según capacidad disponible: <span className="font-semibold text-gray-600">{pctOcupacion}%</span>
+        </div>
+      )}
+
+      {availableSlots.length > 0 && (
+        <div className="border border-emerald-100 bg-emerald-50 rounded-xl px-5 py-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Huecos disponibles</div>
+              <div className="text-xs text-emerald-600/70 mt-0.5">Próximos días donde puedes encajar tareas sin abrir una a una.</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {availableSlots.map(slot => (
+              <button key={slot.key}
+                onClick={() => setExpandedDay(slot.key)}
+                className="bg-white border border-emerald-100 rounded-lg px-3 py-2 text-left hover:bg-emerald-50 transition">
+                <div className="text-xs font-semibold text-gray-700">{DAY_NAMES[slot.d.getDay()]} {slot.d.getDate()}</div>
+                <div className="text-sm font-bold text-emerald-600">{minToHM(slot.free)} libres</div>
+                <div className="text-[10px] text-gray-400">{minToHM(slot.planned)} / {minToHM(slot.capacity)}</div>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -428,9 +585,9 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Distribución por día</span>
           <div className="flex items-center gap-3 ml-auto text-xs text-gray-400">
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-gray-200 inline-block"></span>Libre</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-yellow-300 inline-block"></span>&gt;5h</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-400 inline-block"></span>&gt;6h</span>
-            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-400 inline-block"></span>&gt;7h</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-300 inline-block"></span>&le;100%</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-300 inline-block"></span>100-120%</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-400 inline-block"></span>&gt;120%</span>
           </div>
         </div>
 
@@ -444,13 +601,33 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
             const totalMin = dayTareas.reduce((s,t)=>s+(t.tiempo_estimado||0),0)
             const totalMinReal = dayTareasTotal.reduce((s,t)=>s+(t.tiempo_estimado||0),0)
             const isHoy = key === todayStr
-            const fichadoMin = jornadas[key] || 0
+            const Min = jornadas[key] || 0
+            const capacidadMin = capacityForDate(d)
+            const libreMin = capacidadMin - totalMin
             const pct = maxMin>0?(totalMin/maxMin)*100:0
-            const jornadaPct = maxMin>0?(480/maxMin)*100:100
+            const jornadaPct = maxMin>0?(capacidadMin/maxMin)*100:100
             const isPast = key<todayStr && !isHoy
             const isExpanded = expandedDay===key
-            const color = barColor(totalMin)
-            const textColor = barTextColor(totalMin)
+            const ocupacionPct = capacidadMin > 0 ? Math.round((totalMin / capacidadMin) * 100) : 0
+            const color = capacidadMin === 0
+              ? 'bg-gray-100'
+              : ocupacionPct > 120
+                ? 'bg-red-400'
+                : ocupacionPct > 100
+                  ? 'bg-orange-400'
+                  : totalMin > 0
+                    ? 'bg-emerald-300'
+                    : 'bg-gray-200'
+            const textColor = capacidadMin === 0
+              ? 'text-gray-300'
+              : ocupacionPct > 120
+                ? 'text-red-500'
+                : ocupacionPct > 100
+                  ? 'text-orange-500'
+                  : totalMin > 0
+                    ? 'text-emerald-600'
+                    : 'text-gray-400'
+            const pctOcDia = capacidadMin > 0 ? ocupacionPct : null
             const plannedOverdue = dayTareasBase.filter(t => t.deadline && t.deadline < todayStr && t.fecha_planificada)
 
             return (
@@ -465,6 +642,8 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                     </div>
                     <div className={`text-xs mt-0.5 font-medium ${textColor}`}>
                       {totalMin>0?minToHM(totalMin):<span className="text-gray-200">—</span>}
+                      {pctOcDia!==null&&<span className="ml-1.5 text-gray-400 font-normal">/ {minToHM(capacidadMin)} · {pctOcDia}%</span>}
+                      {capacidadMin===0&&<span className="ml-1.5 text-gray-300 font-normal">0h cap.</span>}
                     </div>
                     {(!allTiposSelected || atrasoFilter !== 'todas') && totalMinReal > 0 && (
                       <div className="text-[10px] text-gray-300 mt-0.5">
@@ -476,8 +655,48 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                   <div className="flex-1 relative h-6 bg-gray-50 rounded-lg overflow-hidden">
                     <div className="absolute top-0 bottom-0 w-px bg-gray-300 z-10" style={{left:`${Math.min(jornadaPct,99)}%`}}></div>
                     {totalMin>0&&<div className={`h-full rounded-lg transition-all ${color}`} style={{width:`${Math.min(pct,100)}%`}}></div>}
-                    {totalMin>420&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-500">+{minToHM(totalMin-420)}</div>}
+                    {capacidadMin>0&&totalMin>capacidadMin&&<div className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold ${ocupacionPct > 120 ? 'text-red-500' : 'text-orange-500'}`}>+{minToHM(totalMin-capacidadMin)} exceso</div>}
+                    {capacidadMin>0&&totalMin>0&&totalMin<=capacidadMin&&<div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600">{minToHM(capacidadMin-totalMin)} margen</div>}
                     {plannedOverdue.length>0&&<div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-violet-600">{plannedOverdue.length} retras.</div>}
+                  </div>
+
+                  <div className="w-56 flex-shrink-0 flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
+                    {editingCapacity===key ? (
+                      <div className="flex items-center gap-1">
+                        <input type="number" value={capacityInput}
+                          onChange={e=>setCapacityInput(e.target.value)}
+                          onKeyDown={e=>{if(e.key==='Enter')saveCapacity(key,parseInt(capacityInput)||0);if(e.key==='Escape')setEditingCapacity(null)}}
+                          className="w-16 border border-gray-300 rounded px-2 py-0.5 text-xs text-center outline-none focus:border-gray-500"
+                          placeholder="min" autoFocus/>
+                        <button onClick={()=>saveCapacity(key,parseInt(capacityInput)||0)}
+                          className="text-xs text-emerald-500 hover:text-emerald-600 font-bold">✓</button>
+                        <button onClick={()=>resetCapacity(key)}
+                          className="text-xs text-gray-300 hover:text-gray-500">reset</button>
+                      </div>
+                    ) : (
+                      <button onClick={()=>{setEditingCapacity(key);setCapacityInput(String(capacidadMin))}}
+                        className={`text-xs px-2 py-1 rounded-lg border transition ${capacityOverrides[key] !== undefined ? 'border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'border-gray-200 text-gray-400 hover:bg-gray-50'}`}
+                        title="Capacidad disponible para planificar este día">
+                        cap. {minToHM(capacidadMin)}
+                      </button>
+                    )}
+
+                    {editingJornada===key ? (
+                      <div className="flex items-center gap-1">
+                        <input type="number" value={jornadaInput}
+                          onChange={e=>setJornadaInput(e.target.value)}
+                          onKeyDown={e=>{if(e.key==='Enter')saveJornada(key,parseInt(jornadaInput)||0);if(e.key==='Escape')setEditingJornada(null)}}
+                          className="w-16 border border-gray-300 rounded px-2 py-0.5 text-xs text-center outline-none focus:border-gray-500"
+                          placeholder="min" autoFocus/>
+                        <button onClick={()=>saveJornada(key,parseInt(jornadaInput)||0)} disabled={savingJornada}
+                          className="text-xs text-emerald-500 hover:text-emerald-600 font-bold">✓</button>
+                      </div>
+                    ) : (
+                      <button onClick={()=>{setEditingJornada(key);setJornadaInput(Min.toString())}}
+                        className={`text-xs px-2 py-1 rounded-lg border transition ${Min>0?'border-gray-200 text-gray-600 hover:bg-gray-50':'border-dashed border-gray-200 text-gray-300 hover:text-gray-400 hover:border-gray-300'}`}>
+                        {Min>0?`⏱ ${minToHM(Min)}`:'+ '}
+                      </button>
+                    )}
                   </div>
 
                   <div className="w-20 flex-shrink-0 flex items-center justify-end gap-2">
@@ -519,7 +738,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
 
                     <div className="flex justify-between pt-1 text-xs text-gray-400">
                       <span>{dayTareas.filter(t=>t.done||t.estado==='Completada').length} completadas · {dayTareas.filter(t=>t.estado==='Omitida').length} omitidas</span>
-                      <span className="font-semibold text-gray-500">{minToHM(totalMin)} total</span>
+                      <span className="font-semibold text-gray-500">{minToHM(totalMin)} / {minToHM(capacidadMin)} · {libreMin>=0 ? `${minToHM(libreMin)} libre` : `${minToHM(Math.abs(libreMin))} exceso`}</span>
                     </div>
                   </div>
                 )}
@@ -544,6 +763,10 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${TIPO_COLORS[t.tipo]||'bg-gray-300'}`}></span>
                 <span className="text-sm text-gray-700 flex-1 truncate">{t.tarea}</span>
                 <span className="text-xs text-gray-400">{minToHM(t.tiempo_estimado)}</span>
+                <button onClick={(e)=>{e.stopPropagation();setEditingPlanDateId(t.id);setPlanDateInput(todayStr)}}
+                  className="text-[10px] px-2 py-1 rounded-lg border border-dashed border-gray-200 text-gray-300 hover:text-gray-500 hover:border-gray-300">
+                  + plan
+                </button>
                 <span className="text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 transition">✏ editar</span>
                 <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${TIPO_TEXT[t.tipo]||'text-gray-500'}`}>{t.tipo}</span>
               </div>
