@@ -355,7 +355,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
       const free = capacity - planned
       return { key, d, planned, capacity, free }
     })
-    .filter(x => x.key >= todayStr && x.capacity > 0 && x.free > 0)
+    .filter(x => x.key > todayStr && x.capacity > 0 && x.free >= 15)
     .slice(0, 8)
 
   const totalMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)

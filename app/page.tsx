@@ -48,6 +48,7 @@ const TABS = [
   { key: 'Completadas', label: 'Historial',    emoji: '📁', sub: '' },
   { key: 'Ejecucion',   label: 'Ejecución',    emoji: '📈', sub: '' },
   { key: 'Carga',       label: 'Carga de trabajo', emoji: '📊', sub: '' },
+  { key: 'Calendario',  label: 'Calendario visual', emoji: '🗓️', sub: '' },
 ]
 
 const empty: Omit<Tarea, 'id'> = {
@@ -513,6 +514,208 @@ function TextFilter({ value, onChange, onSort, sortDir, isSorted }: {
   )
 }
 
+
+function CalendarioVisual({ tareas, onEditTarea }: { tareas: Tarea[], onEditTarea?: (id: number) => void }) {
+  const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
+  const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+  const [tipoFilter, setTipoFilter] = useState<string[]>(TIPOS_ALL)
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const yearEnd = new Date(today.getFullYear(), 11, 31)
+  const daysCount = Math.max(1, Math.floor((yearEnd.getTime() - today.getTime()) / 86400000) + 1)
+
+  const days = Array.from({ length: daysCount }, (_, i) => {
+    const d = new Date(today)
+    d.setDate(today.getDate() + i)
+    return d
+  })
+
+  function keyOf(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  }
+
+  function planningKey(t: Tarea): string {
+    return t.fecha_planificada || t.deadline || ''
+  }
+
+  function daysUntil(key: string): number {
+    const target = new Date(`${key}T00:00:00`)
+    return Math.round((target.getTime() - today.getTime()) / 86400000)
+  }
+
+  function relativeLabel(key: string): string {
+    const n = daysUntil(key)
+    if (n === 0) return 'hoy'
+    if (n === 1) return 'mañana'
+    if (n > 1) return `${n}d`
+    return `${Math.abs(n)}d retraso`
+  }
+
+  function toggleTipo(tipo: string) {
+    setTipoFilter(prev => prev.includes(tipo) ? prev.filter(x => x !== tipo) : [...prev, tipo])
+  }
+
+  const filteredTypes = new Set(tipoFilter)
+
+  const rows = tareas
+    .filter(t => (t as any).es_padre !== true)
+    .filter(t => !(t.done === true || (t.done as any) === 'true' || t.estado === 'Completada' || t.estado === 'Omitida'))
+    .filter(t => filteredTypes.has(t.tipo))
+    .filter(t => !!planningKey(t))
+    .filter(t => planningKey(t) >= keyOf(today))
+    .sort((a, b) => {
+      const ak = planningKey(a)
+      const bk = planningKey(b)
+      if (ak !== bk) return ak.localeCompare(bk)
+      return (a.orden || 0) - (b.orden || 0)
+    })
+
+  const monthSegments: { label: string, start: number, span: number }[] = []
+  days.forEach((d, i) => {
+    if (i === 0 || d.getDate() === 1) {
+      const nextMonthStart = days.findIndex((x, idx) => idx > i && x.getDate() === 1)
+      const span = nextMonthStart === -1 ? days.length - i : nextMonthStart - i
+      monthSegments.push({ label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`, start: i, span })
+    }
+  })
+
+  return (
+    <div className="space-y-5">
+      <div className="border border-gray-100 bg-white rounded-xl px-4 py-3 space-y-3">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-gray-900">Calendario visual</div>
+            <div className="text-xs text-gray-400 mt-0.5">Desde hoy hasta 31 de diciembre. Fecha usada: fecha planificada; si no existe, deadline.</div>
+          </div>
+          <button
+            onClick={() => setTipoFilter(TIPOS_ALL)}
+            className={`text-xs px-3 py-1.5 rounded-full border transition font-semibold ${tipoFilter.length === TIPOS_ALL.length ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            Todos
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {TIPOS_ALL.map(tipo => {
+            const active = tipoFilter.includes(tipo)
+            return (
+              <button key={tipo}
+                onClick={() => toggleTipo(tipo)}
+                className={`text-xs px-3 py-1.5 rounded-full border transition font-semibold flex items-center gap-2 ${active ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                <span className={`w-2 h-2 rounded-full ${active ? 'bg-white' : 'bg-blue-700'}`}></span>
+                {tipo}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="border border-gray-100 rounded-xl bg-white overflow-hidden">
+        <div className="overflow-auto max-h-[72vh]">
+          <div className="min-w-max">
+            <div
+              className="grid sticky top-0 z-20 bg-white border-b border-gray-100"
+              style={{ gridTemplateColumns: `390px repeat(${days.length}, 34px)` }}
+            >
+              <div className="sticky left-0 z-30 bg-white px-4 py-3 border-r border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider row-span-2">
+                Tarea
+              </div>
+
+              {monthSegments.map(seg => (
+                <div
+                  key={`${seg.label}-${seg.start}`}
+                  className="px-2 py-2 text-center border-r border-gray-100 bg-gray-50 text-[11px] font-bold text-gray-500 uppercase tracking-wider"
+                  style={{ gridColumn: `span ${seg.span}` }}
+                >
+                  {seg.label}
+                </div>
+              ))}
+
+              {days.map(d => {
+                const isToday = keyOf(d) === keyOf(today)
+                const isWeekend = d.getDay() === 0 || d.getDay() === 6
+
+                return (
+                  <div key={keyOf(d)} className={`px-1 py-2 text-center border-r border-gray-50 ${isToday ? 'bg-blue-50' : isWeekend ? 'bg-gray-50' : 'bg-white'}`}>
+                    <div className={`text-[10px] font-semibold ${isToday ? 'text-blue-700' : 'text-gray-400'}`}>{DAY_NAMES[d.getDay()]}</div>
+                    <div className={`text-xs font-bold ${isToday ? 'text-blue-700' : 'text-gray-800'}`}>{d.getDate()}</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {rows.length === 0 ? (
+              <div className="p-10 text-center text-gray-300 text-sm">No hay tareas para los filtros seleccionados.</div>
+            ) : (
+              rows.map(t => {
+                const pKey = planningKey(t)
+                const leftDays = relativeLabel(pKey)
+
+                return (
+                  <div key={t.id}
+                    className="grid border-b border-gray-50 hover:bg-gray-50/50 transition"
+                    style={{ gridTemplateColumns: `390px repeat(${days.length}, 34px)` }}
+                  >
+                    <button
+                      onClick={() => onEditTarea?.(t.id)}
+                      className="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-2.5 border-r border-gray-100 text-left"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-2 rounded-full flex-shrink-0 bg-blue-700"></span>
+                        <span className="text-xs font-semibold text-gray-800 truncate" title={t.tarea}>{t.tarea}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-gray-400 mt-1 ml-4">
+                        <span>{t.tipo}</span>
+                        <span>·</span>
+                        <span>{minToHM(t.tiempo_estimado || 0)}</span>
+                        <span>·</span>
+                        <span>{fDate(pKey)}</span>
+                        <span className={`px-1.5 py-0.5 rounded-full font-semibold ${
+                          daysUntil(pKey) === 0 ? 'bg-blue-50 text-blue-600' :
+                          daysUntil(pKey) <= 3 ? 'bg-amber-50 text-amber-600' :
+                          'bg-gray-100 text-gray-500'
+                        }`}>
+                          {leftDays}
+                        </span>
+                      </div>
+                    </button>
+
+                    {days.map(d => {
+                      const k = keyOf(d)
+                      const active = k === pKey
+                      const isToday = k === keyOf(today)
+                      const isWeekend = d.getDay() === 0 || d.getDay() === 6
+
+                      return (
+                        <div
+                          key={`${t.id}-${k}`}
+                          className={`h-[42px] border-r border-gray-50 flex items-center justify-center ${isToday ? 'bg-blue-50/40' : isWeekend ? 'bg-gray-50/60' : ''}`}
+                        >
+                          {active && (
+                            <button
+                              onClick={() => onEditTarea?.(t.id)}
+                              title={`${t.tarea} · ${t.tipo} · ${minToHM(t.tiempo_estimado || 0)} · ${fDate(pKey)} · ${leftDays}`}
+                              className="w-full h-full bg-blue-700/85 hover:bg-blue-800 transition shadow-sm"
+                            >
+                              <span className="sr-only">{t.tarea}</span>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function Field({label, error, children, full}: {label: string, error?: string, children: React.ReactNode, full?: boolean}) {
   return (
     <div className={`flex flex-col gap-1.5 ${full ? 'col-span-2' : ''}`}>
@@ -951,7 +1154,7 @@ export default function Home() {
     if (key==='Todas') return stats.activas
     if (key==='Plan') return stats.plan
     if (key==='Completadas') return stats.completadas
-    if (key==='Carga' || key==='Ejecucion') return 0
+    if (key==='Carga' || key==='Ejecucion' || key==='Calendario') return 0
     if (key==='Rutinaria') return tareasNoPadre.filter(x => RUTINARIAS.includes(x.tipo) && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
     return tareasNoPadre.filter(x => x.tipo===key && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
   }
@@ -1795,29 +1998,45 @@ export default function Home() {
 
       <div className="max-w-screen-2xl mx-auto px-12 pt-10 pb-16">
 
-        <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
+        <div className="mb-8 space-y-2">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-0.5 flex-wrap">
+              {TABS.filter(t=>!['Carga','Ejecucion','Calendario'].includes(t.key)).map(({key,label,emoji,sub})=>{
+                const count=tabCount(key); const isActive=tab===key
+                return(
+                  <button key={key} onClick={()=>setTab(key)} title={sub||undefined}
+                    className={`px-3.5 py-2 rounded-lg text-sm transition font-medium flex items-center gap-2 ${isActive?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}>
+                    <span>{emoji}</span>
+                    <span className="flex items-baseline gap-1.5">
+                      {label}
+                      {sub&&<span className={`text-[10px] font-normal ${isActive?'text-white/60':'text-gray-300'}`}>{sub}</span>}
+                    </span>
+                    {count>0&&<span className={`text-xs px-1.5 py-0.5 rounded-md font-semibold ${isActive?'bg-white/20 text-white':'bg-gray-100 text-gray-400'}`}>{count}</span>}
+                  </button>
+                )
+              })}
+            </div>
+            {hasFilters&&tab!=='Carga'&&tab!=='Ejecucion'&&tab!=='Calendario'&&(
+              <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">Limpiar filtros</button>
+            )}
+          </div>
+
           <div className="flex items-center gap-0.5 flex-wrap">
-            {TABS.map(({key,label,emoji,sub})=>{
+            {TABS.filter(t=>['Ejecucion','Carga','Calendario'].includes(t.key)).map(({key,label,emoji,sub})=>{
               const count=tabCount(key); const isActive=tab===key
               return(
                 <button key={key} onClick={()=>setTab(key)} title={sub||undefined}
                   className={`px-3.5 py-2 rounded-lg text-sm transition font-medium flex items-center gap-2 ${isActive?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}>
                   <span>{emoji}</span>
-                  <span className="flex items-baseline gap-1.5">
-                    {label}
-                    {sub&&<span className={`text-[10px] font-normal ${isActive?'text-white/60':'text-gray-300'}`}>{sub}</span>}
-                  </span>
+                  <span className="flex items-baseline gap-1.5">{label}</span>
                   {count>0&&<span className={`text-xs px-1.5 py-0.5 rounded-md font-semibold ${isActive?'bg-white/20 text-white':'bg-gray-100 text-gray-400'}`}>{count}</span>}
                 </button>
               )
             })}
           </div>
-          {hasFilters&&tab!=='Carga'&&tab!=='Ejecucion'&&(
-            <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">Limpiar filtros</button>
-          )}
         </div>
 
-        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : tab === 'Ejecucion' ? <Ejecucion onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} jornadaMin={previsionMin} cronoSeconds={cronoSeconds} /> : <>
+        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : tab === 'Ejecucion' ? <Ejecucion onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} jornadaMin={previsionMin} cronoSeconds={cronoSeconds} /> : tab === 'Calendario' ? <CalendarioVisual tareas={tareas} onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} /> : <>
 
         {tab === 'Plan' ? (
           <PlanKpis tareas={tareas} filtered={filtered} cronoSeconds={cronoSeconds} cronoRunning={cronoRunning} onStart={startCrono} onPause={pauseCrono} onReset={resetCrono} formatCrono={formatCrono} today={today} previsionMin={previsionMin} setPrevisionMin={setPrevisionMin} onAdjustStart={adjustCronoFromStart} onAdjustEnd={adjustCronoToEnd}/>
