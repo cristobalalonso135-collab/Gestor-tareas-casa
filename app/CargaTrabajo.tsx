@@ -275,18 +275,12 @@ function defaultCapacityForDate(d: Date): number {
     t.deadline < todayStr &&
     !t.fecha_planificada
   )
-  const retrasadasPlanificadas = tareas.filter(t =>
-    t.deadline &&
-    t.deadline < todayStr &&
-    !!t.fecha_planificada
-  )
   const retrasadasSinPlanTotal = tareasActivas.filter(t =>
     t.deadline &&
     t.deadline < todayStr &&
     !t.fecha_planificada
   )
   const retrasadasTotalMin = retrasadasSinPlan.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
-  const retrasadasTotalMinReal = retrasadasSinPlanTotal.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
 
   const maxMin = Math.max(480, ...workdays.map(d => {
     const key = dateKey(d)
@@ -301,33 +295,12 @@ function defaultCapacityForDate(d: Date): number {
   }
 
   const tareasMes = tareas.filter(t => isInViewedMonth(planningDate(t)))
-  const tareasActivasMes = tareasActivas.filter(t => isInViewedMonth(planningDate(t)))
-
-  const retrasadasSinPlanMes = retrasadasSinPlan.filter(t => isInViewedMonth(t.deadline))
-  const retrasadasPlanificadasMes = retrasadasPlanificadas.filter(t => isInViewedMonth(planningDate(t)))
-  const retrasadasTotalMinMes = retrasadasSinPlanMes.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
-
   const sinFecha = tareas.filter(t => !planningDate(t))
   const tareasMesFuturas = tareasMes.filter(t => {
     const key = planningDate(t)
     return !!key && key >= todayStr
   })
-  const tareasActivasMesFuturas = tareasActivasMes.filter(t => {
-    const key = planningDate(t)
-    return !!key && key >= todayStr
-  })
   const totalPendiente = tareasMesFuturas.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-  const totalPendienteReal = tareasActivasMesFuturas.reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-  const totalConFecha = tareasMesFuturas.filter(t => !!planningDate(t)).reduce((s, t) => s + (t.tiempo_estimado||0), 0)
-
-  const mediaPorTarea = tareasMesFuturas.length > 0 ? Math.round(totalPendiente / tareasMesFuturas.length) : 0
-  const tareasFinSemana = tareasMesFuturas.filter(t => {
-    const key = planningDate(t)
-    if (!key) return false
-    const d = new Date(`${key}T00:00:00`)
-    return d.getDay() === 0 || d.getDay() === 6
-  })
-  const totalFinSemana = tareasFinSemana.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
 
   const totalCapacityMes = futureWorkdays.reduce((s, d) => s + capacityForDate(d), 0)
   const totalLibreMes = Math.max(0, totalCapacityMes - totalPendiente)
@@ -340,15 +313,7 @@ function defaultCapacityForDate(d: Date): number {
     // L-V 5h, S-D 2h, o la capacidad manual que hayas puesto.
     return s + Math.max(0, planned - capacity)
   }, 0)
-  const diasEnRiesgo = futureWorkdays.filter(d => {
-    const key = dateKey(d)
-    const capacity = capacityForDate(d)
-    const planned = ((byDay[key] || []).reduce((sum, t) => sum + (t.tiempo_estimado || 0), 0)) + (key === todayStr ? retrasadasTotalMin : 0)
-    return capacity > 0 && planned > capacity
-  }).length
-  const totalFueraCapacidad = Math.max(0, totalPendiente - totalCapacityMes)
   const pctCapacidad = totalCapacityMes > 0 ? Math.round((totalPendiente / totalCapacityMes) * 100) : null
-  const diasSinCapacidad = futureWorkdays.filter(d => capacityForDate(d) === 0).length
 
   const availableSlots = workdays
     .map(d => {
@@ -361,27 +326,12 @@ function defaultCapacityForDate(d: Date): number {
     .filter(x => x.key > todayStr && x.capacity > 0 && x.free >= 15)
     .slice(0, 8)
 
-  const totalMes = workdays.reduce((s, d) => s + (jornadas[dateKey(d)] || 0), 0)
   const pctOcupacion = pctCapacidad
   const retrasadasActivasCount = tareasPorTipo.filter(t => isRetrasada(t)).length
   const noRetrasadasActivasCount = tareasPorTipo.filter(t => !isRetrasada(t)).length
 
   const prevMonth = () => { if (viewMonth===0){setViewMonth(11);setViewYear(y=>y-1)}else setViewMonth(m=>m-1) }
   const nextMonth = () => { if (viewMonth===11){setViewMonth(0);setViewYear(y=>y+1)}else setViewMonth(m=>m+1) }
-
-  function barColor(totalMin: number): string {
-    if (totalMin > 420) return 'bg-red-400'     // >7h
-    if (totalMin > 360) return 'bg-orange-400'  // >6h
-    if (totalMin > 300) return 'bg-yellow-300'  // >5h
-    return 'bg-gray-200'
-  }
-
-  function barTextColor(totalMin: number): string {
-    if (totalMin > 420) return 'text-red-500'     // >7h
-    if (totalMin > 360) return 'text-orange-500'  // >6h
-    if (totalMin > 300) return 'text-yellow-500'  // >5h
-    return 'text-gray-400'
-  }
 
   function renderTaskRow(t: Tarea, variant: 'normal' | 'overdue' = 'normal') {
     const isOverdue = !!t.deadline && t.deadline < todayStr && !isInactive(t)

@@ -1,9 +1,8 @@
-'use client'
+﻿'use client'
 
 import { Fragment, useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import CargaTrabajo from './CargaTrabajo'
-import Ejecucion from './Ejecucion'
 
 type Tarea = {
   id: number
@@ -18,7 +17,7 @@ type Tarea = {
   deadline: string
   fecha_planificada?: string | null
   fecha_finalizacion: string
-  done: boolean
+  done: boolean | string
   solicitado_por: string
   orden: number
   en_plan: boolean
@@ -32,6 +31,31 @@ type Tarea = {
   es_padre?: boolean
 }
 
+type TareaImportPayload = {
+  tipo: string
+  tarea: string
+  notas: string | null
+  solicitado_por: string
+  prioridad: string
+  estado: string
+  tiempo_estimado: number
+  tiempo_real: number
+  fecha_solicitud: string
+  deadline: string
+  fecha_planificada: string | null
+  fecha_finalizacion: string | null
+  hora_finalizacion: string | null
+  done: boolean
+  en_plan: boolean
+  excluir_plan: boolean
+}
+
+type DuplicateImport = {
+  id: number
+  actual: Tarea
+  update: TareaImportPayload
+}
+
 const TIPOS_FORM = ['Operativa', 'Táctica', 'Estratégica']
 const TIPOS_ALL  = ['Semanal', 'Mensual', 'Trimestral', 'Operativa', 'Táctica', 'Estratégica']
 const RUTINARIAS = ['Semanal', 'Mensual', 'Trimestral']
@@ -39,16 +63,22 @@ const ESTADOS    = ['Pendiente', 'En espera', 'En progreso', 'Completada', 'Omit
 const PRIORIDADES = ['Alta', 'Media', 'Baja']
 
 const TABS = [
-  { key: 'Todas',       label: 'Todas',        emoji: '◈',  sub: '' },
+  { key: 'Todas',       label: 'Todas',        emoji: '●',  sub: '' },
   { key: 'Plan',        label: 'Plan del día', emoji: '☀️', sub: '' },
   { key: 'Rutinaria',   label: 'Rutinarias',   emoji: '🔁', sub: '' },
-  { key: 'Operativa',   label: 'Operativas',   emoji: '⚡', sub: '≤30 min' },
-  { key: 'Táctica',     label: 'Tácticas',     emoji: '🎯', sub: '≤120 min' },
+  { key: 'Operativa',   label: 'Operativas',   emoji: '⚡', sub: '<=30 min' },
+  { key: 'Táctica',     label: 'Tácticas',     emoji: '🎯', sub: '<=120 min' },
   { key: 'Estratégica', label: 'Estratégicas', emoji: '🔭', sub: '>120 min' },
   { key: 'Completadas', label: 'Historial',    emoji: '📁', sub: '' },
-  { key: 'Ejecucion',   label: 'Ejecución',    emoji: '📈', sub: '' },
   { key: 'Carga',       label: 'Carga de trabajo', emoji: '📊', sub: '' },
-  { key: 'Calendario',  label: 'Calendario visual', emoji: '🗓️', sub: '' },
+]
+
+const MODULES = [
+  { key: 'tareas', label: 'Tareas', description: 'Plan, listado por vistas y carga de trabajo.', status: 'Activo', tone: 'bg-gray-900 text-white', accent: 'bg-gray-900', meta: 'Disponible' },
+  { key: 'dinero', label: 'Dinero', description: 'Rendimientos, ingresos, gastos y evolución.', status: 'Pendiente', tone: 'bg-emerald-50 text-emerald-700', accent: 'bg-emerald-500', meta: 'Finanzas' },
+  { key: 'salud', label: 'Salud y hábitos', description: 'Hábitos, musculación, indicadores y seguimiento.', status: 'Pendiente', tone: 'bg-rose-50 text-rose-700', accent: 'bg-rose-500', meta: 'Rutinas' },
+  { key: 'pareja', label: 'Pareja', description: 'Los 5 lenguajes del amor y señales de cuidado.', status: 'Pendiente', tone: 'bg-violet-50 text-violet-700', accent: 'bg-violet-500', meta: 'Cuidado' },
+  { key: 'dentistas', label: 'Dentistas', description: 'Proyecto, tareas, hitos y próximos pasos.', status: 'Pendiente', tone: 'bg-sky-50 text-sky-700', accent: 'bg-sky-500', meta: 'Proyecto' },
 ]
 
 const empty: Omit<Tarea, 'id'> = {
@@ -95,7 +125,7 @@ function diasRetraso(deadline: string, today: string): number {
 }
 
 function fDate(d: string) {
-  if (!d) return '—'
+  if (!d) return '-'
   const [y, m, dd] = d.split('-')
   return `${dd}/${m}/${y}`
 }
@@ -129,166 +159,67 @@ function KpiCard({ label, val, sub, accent }: { label: string, val: string | num
   )
 }
 
-function GeneralKpis({ tareas, filtered, tab, today }: { tareas: any[], filtered: any[], tab: string, today: string }) {
+function GeneralKpis({ tareas, filtered, tab, today }: { tareas: Tarea[], filtered: Tarea[], tab: string, today: string }) {
   const total = filtered.length
-  const tEst = filtered.reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
-  const completadasHoy = tareas.filter((t: any) => t.fecha_finalizacion === today && (t.done || t.estado === 'Completada')).length
+  const tEst = filtered.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+  const completadasHoy = tareas.filter(t => t.fecha_finalizacion === today && (t.done || t.estado === 'Completada')).length
   const avgMin = total > 0 ? Math.round(tEst / total) : 0
+  const activas = tareas.filter(t => !t.done && t.estado !== 'Omitida')
 
   return (
     <div className="grid grid-cols-4 gap-5 mb-8">
       <KpiCard label="Tareas" val={total} sub={tab === 'Completadas' ? 'en historial' : 'sin completar'}/>
       <KpiCard label="Tiempo estimado" val={minToHM(tEst)} sub={`${avgMin}m de media`}/>
       <KpiCard label="Completadas hoy" val={completadasHoy} sub="marcadas hoy"/>
-      <KpiCard label="Tareas activas total" val={tareas.filter((t: any) => !t.done && t.estado !== 'Omitida').length} sub={minToHM(tareas.filter((t: any) => !t.done && t.estado !== 'Omitida').reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0))}/>
+      <KpiCard label="Tareas activas total" val={activas.length} sub={minToHM(activas.reduce((s, t) => s + (t.tiempo_estimado || 0), 0))}/>
     </div>
   )
 }
 
-function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPause, onReset, formatCrono, today, previsionMin, setPrevisionMin, onAdjustStart, onAdjustEnd }:
-  { tareas: any[], filtered: any[], cronoSeconds: number, cronoRunning: boolean, onStart: ()=>void, onPause: ()=>void, onReset: ()=>void, formatCrono: (s:number)=>string, today: string, previsionMin: number, setPrevisionMin: (v:number)=>void, onAdjustStart: (hhmm:string)=>void, onAdjustEnd: (hhmm:string)=>void }) {
-
-  const [editingPrev, setEditingPrev] = useState(false)
-  const [prevInput, setPrevInput] = useState(String(previsionMin))
-  const [editingStart, setEditingStart] = useState(false)
-  const [startInput, setStartInput] = useState('09:00')
-  const [editingEnd, setEditingEnd] = useState(false)
-  const [endInput, setEndInput] = useState('17:30')
-
+function PlanKpis({ filtered }: { filtered: Tarea[] }) {
   const total = filtered.length
-  const hechas = filtered.filter((t: any) => t.done || t.estado === 'Completada' || t.estado === 'Omitida').length
+  const hechas = filtered.filter(t => t.done || t.estado === 'Completada' || t.estado === 'Omitida').length
   const pct = total > 0 ? Math.round((hechas / total) * 100) : 0
 
-  const tEstTotal = filtered.reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
-  const tEstHecho = filtered.filter((t: any) => t.done || t.estado === 'Completada').reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
-  const tRealHecho = filtered.filter((t: any) => t.done || t.estado === 'Completada').reduce((s: number, t: any) => s + (t.tiempo_real || 0), 0)
-  const tEstPendiente = filtered.filter((t: any) => !t.done && t.estado !== 'Completada' && t.estado !== 'Omitida').reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
+  const tEstTotal = filtered.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+  const tEstHecho = filtered.filter(t => t.done || t.estado === 'Completada').reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+  const pendientes = filtered.filter(t => !t.done && t.estado !== 'Completada' && t.estado !== 'Omitida')
+  const pendientesCount = pendientes.length
+  const pendientesMin = pendientes.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+  const hoy = new Date().toISOString().split('T')[0]
+  const vencenHoy = pendientes.filter(t => t.deadline === hoy).length
+  const retrasadas = pendientes.filter(t => t.deadline && t.deadline < hoy).length
   const pctTiempo = tEstTotal > 0 ? Math.round((tEstHecho / tEstTotal) * 100) : 0
-
-  const cronoMin = Math.floor(cronoSeconds / 60)
-  const tiempoRestante = Math.max(0, previsionMin - cronoMin)
-  const gap = tiempoRestante - tEstPendiente
 
   return (
     <div className="mb-8 space-y-4">
-      <div className="flex items-center gap-4 bg-gray-50 border border-gray-100 rounded-xl px-5 py-3">
-        <div className="flex items-center gap-2">
-          {!cronoRunning ? (
-            <button onClick={onStart}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-700 transition">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              {cronoSeconds > 0 ? 'Reanudar' : 'Iniciar'}
-            </button>
-          ) : (
-            <button onClick={onPause}
-              className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 transition">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-              Pausar
-            </button>
-          )}
-          {cronoSeconds > 0 && (
-            <button onClick={onReset} className="px-3 py-2 border border-gray-200 text-gray-400 rounded-lg text-sm hover:bg-white transition">↺</button>
-          )}
-        </div>
-
-        <div className="text-2xl font-mono font-bold text-gray-900 min-w-[90px]">{formatCrono(cronoSeconds)}</div>
-
-        {/* Hora inicio editable */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <span className="text-xs text-gray-400">Inicio:</span>
-          {editingStart ? (
-            <div className="flex items-center gap-1">
-              <input type="time" value={startInput} onChange={e=>setStartInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==='Enter'){onAdjustStart(startInput);setEditingStart(false)}if(e.key==='Escape')setEditingStart(false)}}
-                className="w-24 border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-gray-500" autoFocus/>
-              <button onClick={()=>{onAdjustStart(startInput);setEditingStart(false)}} className="text-xs text-emerald-500 font-bold">OK</button>
-            </div>
-          ) : (
-            <button onClick={()=>setEditingStart(true)}
-              className="text-xs font-semibold text-gray-600 border border-dashed border-gray-300 px-2 py-1 rounded hover:bg-white hover:border-gray-400 transition"
-              title="Ajustar segun hora de fichaje">
-              Ajustar
-            </button>
-          )}
-        </div>
-
-        {/* Hora fin editable */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <span className="text-xs text-gray-400">Fin:</span>
-          {editingEnd ? (
-            <div className="flex items-center gap-1">
-              <input type="time" value={endInput} onChange={e=>setEndInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==='Enter'){onAdjustEnd(endInput);setEditingEnd(false)}if(e.key==='Escape')setEditingEnd(false)}}
-                className="w-24 border border-gray-300 rounded px-2 py-1 text-xs outline-none focus:border-gray-500" autoFocus/>
-              <button onClick={()=>{onAdjustEnd(endInput);setEditingEnd(false)}} className="text-xs text-emerald-500 font-bold">OK</button>
-            </div>
-          ) : (
-            <button onClick={()=>setEditingEnd(true)}
-              className="text-xs font-semibold text-gray-600 border border-dashed border-gray-300 px-2 py-1 rounded hover:bg-white hover:border-gray-400 transition"
-              title="Ajustar segun hora de fin de fichaje">
-              Ajustar
-            </button>
-          )}
-        </div>
-
-        {previsionMin > 0 && (
-          <div className="flex-1 flex items-center gap-3">
-            <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${cronoMin > previsionMin ? 'bg-red-400' : 'bg-emerald-400'}`}
-                style={{width:`${Math.min(100, previsionMin > 0 ? (cronoMin/previsionMin)*100 : 0)}%`}}>
-              </div>
-            </div>
-            <span className="text-xs text-gray-400 whitespace-nowrap">{minToHM(cronoMin)} / {minToHM(previsionMin)}</span>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="text-xs text-gray-400">Previsión:</span>
-          {editingPrev ? (
-            <div className="flex items-center gap-1">
-              <input type="number" value={prevInput} onChange={e=>setPrevInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==='Enter'){setPrevisionMin(parseInt(prevInput)||480);setEditingPrev(false)}if(e.key==='Escape')setEditingPrev(false)}}
-                className="w-16 border border-gray-300 rounded px-2 py-1 text-xs text-center outline-none focus:border-gray-500" autoFocus/>
-              <span className="text-xs text-gray-400">min</span>
-              <button onClick={()=>{setPrevisionMin(parseInt(prevInput)||480);setEditingPrev(false)}} className="text-xs text-emerald-500 font-bold">✓</button>
-            </div>
-          ) : (
-            <button onClick={()=>{setPrevInput(previsionMin.toString());setEditingPrev(true)}}
-              className="text-xs font-semibold text-gray-600 border border-gray-200 px-2 py-1 rounded hover:bg-white transition">
-              {minToHM(previsionMin)}
-            </button>
-          )}
-        </div>
-      </div>
-
       {(() => {
-        const completadas = filtered.filter((t: any) => t.done || t.estado === 'Completada')
-        const estCompletadas = completadas.reduce((s: number, t: any) => s + (t.tiempo_estimado || 0), 0)
-        const realCompletadas = completadas.reduce((s: number, t: any) => s + (t.tiempo_real || 0), 0)
+        const completadas = filtered.filter(t => t.done || t.estado === 'Completada')
+        const estCompletadas = completadas.reduce((s, t) => s + (t.tiempo_estimado || 0), 0)
+        const realCompletadas = completadas.reduce((s, t) => s + (t.tiempo_real || 0), 0)
         const diffCompletadas = realCompletadas - estCompletadas
 
         return (
-          <div className="grid grid-cols-3 gap-3">
-            <div className="border border-gray-100 rounded-xl px-4 py-3 bg-white">
-              <div className="text-lg font-bold text-gray-900">{minToHM(estCompletadas)}</div>
-              <div className="text-xs text-gray-400">Estimado completadas</div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="border border-gray-100 rounded-lg px-3 py-2 bg-white">
+              <div className="text-sm font-semibold text-gray-500">{minToHM(estCompletadas)}</div>
+              <div className="text-[11px] text-gray-300">Estimado completadas</div>
             </div>
-            <div className="border border-gray-100 rounded-xl px-4 py-3 bg-white">
-              <div className="text-lg font-bold text-gray-900">{minToHM(realCompletadas)}</div>
-              <div className="text-xs text-gray-400">Real completadas</div>
+            <div className="border border-gray-100 rounded-lg px-3 py-2 bg-white">
+              <div className="text-sm font-semibold text-gray-500">{minToHM(realCompletadas)}</div>
+              <div className="text-[11px] text-gray-300">Real completadas</div>
             </div>
-            <div className={`border rounded-xl px-4 py-3 ${diffCompletadas <= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
-              <div className={`text-lg font-bold ${diffCompletadas <= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+            <div className="border border-gray-100 rounded-lg px-3 py-2 bg-white">
+              <div className={`text-sm font-semibold ${diffCompletadas <= 0 ? 'text-gray-500' : 'text-red-400'}`}>
                 {diffCompletadas === 0 ? '=' : diffCompletadas > 0 ? `+${minToHM(diffCompletadas)}` : `-${minToHM(Math.abs(diffCompletadas))}`}
               </div>
-              <div className="text-xs text-gray-400">Diferencia completadas</div>
+              <div className="text-[11px] text-gray-300">Diferencia completadas</div>
             </div>
           </div>
         )
       })()}
 
-      <div className="grid grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         <div className="border border-gray-100 rounded-xl p-5 hover:border-gray-200 transition">
           <div className="text-2xl font-bold text-gray-900 mb-1">{hechas}<span className="text-gray-300 text-lg font-normal">/{total}</span></div>
           <div className="text-sm font-semibold text-gray-700 mb-1">Tareas</div>
@@ -311,68 +242,19 @@ function PlanKpis({ tareas, filtered, cronoSeconds, cronoRunning, onStart, onPau
           </div>
         </div>
 
-        {(() => {
-          const tRealDone = filtered.filter((t: any) => t.done || t.estado === 'Completada').reduce((s: number, t: any) => s + (t.tiempo_real || 0), 0)
-          const diff = tRealDone - cronoMin
-          const noData = cronoMin === 0
-          const pctUso = cronoMin > 0 ? Math.round((tRealDone / cronoMin) * 100) : 0
-          const bueno = diff >= 0
-          return (
-            <div className={`border rounded-xl p-5 transition ${noData ? 'border-gray-100' : bueno ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className={`text-2xl font-bold ${noData ? 'text-gray-300' : bueno ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {noData ? '—' : (diff >= 0 ? '+' : '-') + minToHM(Math.abs(diff))}
-                </span>
-                {!noData && <span className={`text-sm font-semibold ${bueno ? 'text-emerald-400' : 'text-red-300'}`}>{pctUso}%</span>}
-              </div>
-              <div className="text-sm font-semibold text-gray-700 mb-1">Rendimiento</div>
-              {noData ? (
-                <div className="text-xs text-gray-400">Inicia el cronómetro</div>
-              ) : (
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${bueno ? 'bg-emerald-400' : 'bg-red-400'}`} style={{width:`${Math.min(pctUso, 100)}%`}}></div>
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-gray-400">
-                    {`Fichado ${minToHM(cronoMin)} · Trabajado ${minToHM(tRealDone)}`}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })()}
+        <div className="border border-gray-100 rounded-xl p-5 hover:border-gray-200 transition">
+          <div className="text-2xl font-bold text-gray-900 mb-1">{pendientesCount}<span className="text-gray-300 text-lg font-normal"> pendientes</span></div>
+          <div className="text-sm font-semibold text-gray-700 mb-1">Por resolver</div>
+          <div className="text-xs text-gray-400">{minToHM(pendientesMin)} estimadas</div>
+        </div>
 
-        {(() => {
-          const restJornada = Math.max(0, previsionMin - cronoMin)
-          const margen = restJornada - tEstPendiente
-          return (
-            <div className={`border rounded-xl p-5 transition ${margen >= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className={`text-2xl font-bold ${margen >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {margen >= 0 ? `+${minToHM(margen)}` : `-${minToHM(Math.abs(margen))}`}
-                </span>
-                <span className={`text-sm font-semibold ${margen >= 0 ? 'text-emerald-400' : 'text-red-300'}`}>
-                  {margen >= 0 ? '✓ Llegas' : '⚠ No llegas'}
-                </span>
-              </div>
-              <div className="text-sm font-semibold text-gray-700 mb-1">Jornada</div>
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] text-gray-400">
-                  <span>Restante: {minToHM(restJornada)}</span>
-                  <span>Pendiente: {minToHM(tEstPendiente)}</span>
-                </div>
-                <div className="flex items-center gap-0">
-                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden relative">
-                    <div className={`h-full rounded-full transition-all ${margen >= 0 ? 'bg-emerald-400' : 'bg-red-400'}`}
-                      style={{width:`${restJornada > 0 ? Math.min(100, (tEstPendiente / restJornada) * 100) : 100}%`}}></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
+        <div className="border border-gray-100 rounded-xl p-5 hover:border-gray-200 transition">
+          <div className="text-2xl font-bold text-gray-900 mb-1">{vencenHoy}<span className="text-gray-300 text-lg font-normal"> hoy</span></div>
+          <div className="text-sm font-semibold text-gray-700 mb-1">Deadline</div>
+          <div className={`text-xs ${retrasadas > 0 ? 'text-red-400' : 'text-gray-400'}`}>
+            {retrasadas > 0 ? `${retrasadas} atrasadas` : 'Sin atrasos'}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -515,207 +397,6 @@ function TextFilter({ value, onChange, onSort, sortDir, isSorted }: {
 }
 
 
-function CalendarioVisual({ tareas, onEditTarea }: { tareas: Tarea[], onEditTarea?: (id: number) => void }) {
-  const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
-  const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
-  const [tipoFilter, setTipoFilter] = useState<string[]>(TIPOS_ALL)
-
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  const yearEnd = new Date(today.getFullYear(), 11, 31)
-  const daysCount = Math.max(1, Math.floor((yearEnd.getTime() - today.getTime()) / 86400000) + 1)
-
-  const days = Array.from({ length: daysCount }, (_, i) => {
-    const d = new Date(today)
-    d.setDate(today.getDate() + i)
-    return d
-  })
-
-  function keyOf(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-  }
-
-  function planningKey(t: Tarea): string {
-    return t.fecha_planificada || t.deadline || ''
-  }
-
-  function daysUntil(key: string): number {
-    const target = new Date(`${key}T00:00:00`)
-    return Math.round((target.getTime() - today.getTime()) / 86400000)
-  }
-
-  function relativeLabel(key: string): string {
-    const n = daysUntil(key)
-    if (n === 0) return 'hoy'
-    if (n === 1) return 'mañana'
-    if (n > 1) return `${n}d`
-    return `${Math.abs(n)}d retraso`
-  }
-
-  function toggleTipo(tipo: string) {
-    setTipoFilter(prev => prev.includes(tipo) ? prev.filter(x => x !== tipo) : [...prev, tipo])
-  }
-
-  const filteredTypes = new Set(tipoFilter)
-
-  const rows = tareas
-    .filter(t => (t as any).es_padre !== true)
-    .filter(t => !(t.done === true || (t.done as any) === 'true' || t.estado === 'Completada' || t.estado === 'Omitida'))
-    .filter(t => filteredTypes.has(t.tipo))
-    .filter(t => !!planningKey(t))
-    .filter(t => planningKey(t) >= keyOf(today))
-    .sort((a, b) => {
-      const ak = planningKey(a)
-      const bk = planningKey(b)
-      if (ak !== bk) return ak.localeCompare(bk)
-      return (a.orden || 0) - (b.orden || 0)
-    })
-
-  const monthSegments: { label: string, start: number, span: number }[] = []
-  days.forEach((d, i) => {
-    if (i === 0 || d.getDate() === 1) {
-      const nextMonthStart = days.findIndex((x, idx) => idx > i && x.getDate() === 1)
-      const span = nextMonthStart === -1 ? days.length - i : nextMonthStart - i
-      monthSegments.push({ label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`, start: i, span })
-    }
-  })
-
-  return (
-    <div className="space-y-5">
-      <div className="border border-gray-100 bg-white rounded-xl px-4 py-3 space-y-3">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <div className="text-sm font-semibold text-gray-900">Calendario visual</div>
-            <div className="text-xs text-gray-400 mt-0.5">Desde hoy hasta 31 de diciembre. Fecha usada: fecha planificada; si no existe, deadline.</div>
-          </div>
-          <button
-            onClick={() => setTipoFilter(TIPOS_ALL)}
-            className={`text-xs px-3 py-1.5 rounded-full border transition font-semibold ${tipoFilter.length === TIPOS_ALL.length ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-            Todos
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {TIPOS_ALL.map(tipo => {
-            const active = tipoFilter.includes(tipo)
-            return (
-              <button key={tipo}
-                onClick={() => toggleTipo(tipo)}
-                className={`text-xs px-3 py-1.5 rounded-full border transition font-semibold flex items-center gap-2 ${active ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                <span className={`w-2 h-2 rounded-full ${active ? 'bg-white' : 'bg-blue-700'}`}></span>
-                {tipo}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      <div className="border border-gray-100 rounded-xl bg-white overflow-hidden">
-        <div className="overflow-auto max-h-[72vh]">
-          <div className="min-w-max">
-            <div
-              className="grid sticky top-0 z-20 bg-white border-b border-gray-100"
-              style={{ gridTemplateColumns: `390px repeat(${days.length}, 34px)` }}
-            >
-              <div className="sticky left-0 z-30 bg-white px-4 py-3 border-r border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider row-span-2">
-                Tarea
-              </div>
-
-              {monthSegments.map(seg => (
-                <div
-                  key={`${seg.label}-${seg.start}`}
-                  className="px-2 py-2 text-center border-r border-gray-100 bg-gray-50 text-[11px] font-bold text-gray-500 uppercase tracking-wider"
-                  style={{ gridColumn: `span ${seg.span}` }}
-                >
-                  {seg.label}
-                </div>
-              ))}
-
-              {days.map(d => {
-                const isToday = keyOf(d) === keyOf(today)
-                const isWeekend = d.getDay() === 0 || d.getDay() === 6
-
-                return (
-                  <div key={keyOf(d)} className={`px-1 py-2 text-center border-r border-gray-50 ${isToday ? 'bg-blue-50' : isWeekend ? 'bg-gray-50' : 'bg-white'}`}>
-                    <div className={`text-[10px] font-semibold ${isToday ? 'text-blue-700' : 'text-gray-400'}`}>{DAY_NAMES[d.getDay()]}</div>
-                    <div className={`text-xs font-bold ${isToday ? 'text-blue-700' : 'text-gray-800'}`}>{d.getDate()}</div>
-                  </div>
-                )
-              })}
-            </div>
-
-            {rows.length === 0 ? (
-              <div className="p-10 text-center text-gray-300 text-sm">No hay tareas para los filtros seleccionados.</div>
-            ) : (
-              rows.map(t => {
-                const pKey = planningKey(t)
-                const leftDays = relativeLabel(pKey)
-
-                return (
-                  <div key={t.id}
-                    className="grid border-b border-gray-50 hover:bg-gray-50/50 transition"
-                    style={{ gridTemplateColumns: `390px repeat(${days.length}, 34px)` }}
-                  >
-                    <button
-                      onClick={() => onEditTarea?.(t.id)}
-                      className="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-2.5 border-r border-gray-100 text-left"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0 bg-blue-700"></span>
-                        <span className="text-xs font-semibold text-gray-800 truncate" title={t.tarea}>{t.tarea}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-gray-400 mt-1 ml-4">
-                        <span>{t.tipo}</span>
-                        <span>·</span>
-                        <span>{minToHM(t.tiempo_estimado || 0)}</span>
-                        <span>·</span>
-                        <span>{fDate(pKey)}</span>
-                        <span className={`px-1.5 py-0.5 rounded-full font-semibold ${
-                          daysUntil(pKey) === 0 ? 'bg-blue-50 text-blue-600' :
-                          daysUntil(pKey) <= 3 ? 'bg-amber-50 text-amber-600' :
-                          'bg-gray-100 text-gray-500'
-                        }`}>
-                          {leftDays}
-                        </span>
-                      </div>
-                    </button>
-
-                    {days.map(d => {
-                      const k = keyOf(d)
-                      const active = k === pKey
-                      const isToday = k === keyOf(today)
-                      const isWeekend = d.getDay() === 0 || d.getDay() === 6
-
-                      return (
-                        <div
-                          key={`${t.id}-${k}`}
-                          className={`h-[42px] border-r border-gray-50 flex items-center justify-center ${isToday ? 'bg-blue-50/40' : isWeekend ? 'bg-gray-50/60' : ''}`}
-                        >
-                          {active && (
-                            <button
-                              onClick={() => onEditTarea?.(t.id)}
-                              title={`${t.tarea} · ${t.tipo} · ${minToHM(t.tiempo_estimado || 0)} · ${fDate(pKey)} · ${leftDays}`}
-                              className="w-full h-full bg-blue-700/85 hover:bg-blue-800 transition shadow-sm"
-                            >
-                              <span className="sr-only">{t.tarea}</span>
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
 function Field({label, error, children, full}: {label: string, error?: string, children: React.ReactNode, full?: boolean}) {
   return (
     <div className={`flex flex-col gap-1.5 ${full ? 'col-span-2' : ''}`}>
@@ -727,6 +408,7 @@ function Field({label, error, children, full}: {label: string, error?: string, c
 }
 
 export default function Home() {
+  const [activeModule, setActiveModule] = useState<string | null>(null)
   const [tareas, setTareas] = useState<Tarea[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
@@ -739,7 +421,7 @@ export default function Home() {
   const [cargaRefreshKey, setCargaRefreshKey] = useState(0)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<{ added: number, skipped: number, duplicates: any[], errors: string[] } | null>(null)
+  const [importResult, setImportResult] = useState<{ added: number, skipped: number, duplicates: DuplicateImport[], errors: string[] } | null>(null)
 
   const [tiempoRealModal, setTiempoRealModal] = useState<{tarea: Tarea, action: 'complete'|'omit'} | null>(null)
   const [tiempoRealInput, setTiempoRealInput] = useState('')
@@ -784,14 +466,8 @@ export default function Home() {
   }
 
   const fragmentPartsTotal = fragmentParts.reduce((sum, part) => sum + (part.minutes || 0), 0)
-  const [fragmentDeadlines, setFragmentDeadlines] = useState<string[]>([])
 
-  const [previsionMin, setPrevisionMin] = useState(480)
-  const [cronoRunning, setCronoRunning] = useState(false)
-  const [cronoSeconds, setCronoSeconds] = useState(0)
-  const cronoRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const cronoStartRef = useRef<number | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [, setDeleting] = useState(false)
 
   const [fTarea, setFTarea] = useState('')
   const [fTipo, setFTipo] = useState<Set<string>>(new Set())
@@ -840,14 +516,14 @@ export default function Home() {
 
   useEffect(() => {
     const savedTab = localStorage.getItem('gestor_tab')
-    if (savedTab) setTab(savedTab as any)
+    if (savedTab && TABS.some(t => t.key === savedTab)) setTab(savedTab)
     // gestor_tab_restored
   }, [])
 
   useEffect(() => {
     setMounted(true)
     const savedTab = localStorage.getItem('gestor_tab') || 'Plan'
-    setTab(savedTab === 'Casa' ? 'Plan' : savedTab)
+    setTab(TABS.some(t => t.key === savedTab) ? savedTab : 'Plan')
     // gestor_tab_mounted_restore
   }, [])
 
@@ -860,65 +536,6 @@ export default function Home() {
     if (!mounted) return
     if (tab === 'Plan') fetchTareas()
   }, [tab, mounted])
-
-  useEffect(() => {
-    const running = localStorage.getItem('gestor_crono_running') === 'true'
-    const startedAt = parseInt(localStorage.getItem('gestor_crono_started_at') || '0') || 0
-    const baseSeconds = parseInt(localStorage.getItem('gestor_crono_base_seconds') || localStorage.getItem('gestor_crono_seconds') || '0') || 0
-    const liveSeconds = parseInt(localStorage.getItem('gestor_crono_seconds_live') || '0') || 0
-    const savedDate = localStorage.getItem('gestor_crono_date') || today
-
-    const elapsed = running && startedAt > 0
-      ? Math.floor((Date.now() - startedAt) / 1000)
-      : 0
-
-    const total = running && startedAt > 0
-      ? Math.max(0, liveSeconds, baseSeconds + elapsed)
-      : Math.max(0, liveSeconds, baseSeconds)
-
-    // Si ha cambiado el día, guardamos el fichaje del día anterior y reseteamos.
-    if (savedDate !== today) {
-      if (total > 0) {
-        supabase.from('jornadas').upsert(
-          { fecha: savedDate, minutos_fichados: Math.floor(total / 60) },
-          { onConflict: 'fecha' }
-        )
-      }
-
-      if (cronoRef.current) clearInterval(cronoRef.current)
-
-      localStorage.setItem('gestor_crono_date', today)
-      localStorage.setItem('gestor_crono_running', 'false')
-      localStorage.setItem('gestor_crono_seconds', '0')
-      localStorage.setItem('gestor_crono_base_seconds', '0')
-      localStorage.removeItem('gestor_crono_started_at')
-      localStorage.removeItem('gestor_crono_seconds_live')
-      localStorage.removeItem('gestor_crono_manual_start')
-
-      setCronoRunning(false)
-      setCronoSeconds(0)
-      cronoStartRef.current = null
-      return
-    }
-
-    localStorage.setItem('gestor_crono_date', today)
-
-    if (running && startedAt > 0) {
-      setCronoSeconds(total)
-      cronoStartRef.current = Date.now() - total * 1000
-
-      if (cronoRef.current) clearInterval(cronoRef.current)
-      cronoRef.current = setInterval(() => {
-        const next = Math.floor((Date.now() - cronoStartRef.current!) / 1000)
-        setCronoSeconds(next)
-        localStorage.setItem('gestor_crono_seconds_live', String(next))
-      }, 1000)
-
-      setCronoRunning(true)
-    } else {
-      setCronoSeconds(total)
-    }
-  }, [])
 
   useEffect(() => {
     async function init() {
@@ -947,23 +564,6 @@ export default function Home() {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
 
-  useEffect(() => {
-    if (cronoRunning) return
-    localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-    localStorage.setItem('gestor_crono_base_seconds', String(cronoSeconds))
-  })
-
-  useEffect(() => {
-    if (!fragmentModal) return
-    const size = Math.max(1, fragmentSize || 120)
-    const total = Math.max(0, fragmentModal.tiempo_estimado || 0)
-    const parts = Math.max(1, Math.ceil(total / size))
-
-    setFragmentDeadlines(prev =>
-      Array.from({ length: parts }, (_, i) => prev[i] || fragmentModal.deadline || today)
-    )
-  }, [fragmentModal, fragmentSize, today])
-
   async function fetchTareas() {
     setLoading(true)
     const { data } = await supabase.from('tareas').select('*').order('orden', { ascending: true }).order('id', { ascending: false })
@@ -975,9 +575,9 @@ export default function Home() {
 
   function getTabFiltered(): Tarea[] {
     return tareas.filter(t => {
-      const isDone = t.done === true || (t.done as any) === 'true'
+      const isDone = t.done === true || t.done === 'true'
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
-      const isParent = (t as any).es_padre === true
+      const isParent = t.es_padre === true
       if (isParent) return false
 
       const normalized = { ...t, done: isDone }
@@ -1004,15 +604,14 @@ export default function Home() {
   const tabFiltered = getTabFiltered()
   const fechaSolOpts = uniq(tabFiltered.map(t => t.fecha_solicitud ? fDate(t.fecha_solicitud) : ''))
   const deadlineOpts = uniq(tabFiltered.map(t => t.deadline ? fDate(t.deadline) : ''))
-  const fechaFinOpts = uniq(tabFiltered.filter(t => t.fecha_finalizacion).map(t => fDate(t.fecha_finalizacion)))
   const tipoOpts = uniq(tabFiltered.map(t => t.tipo))
   const estadoOpts = uniq(tabFiltered.map(t => t.estado))
 
   function isEnPlan(t: Tarea): boolean {
-    const isDone = t.done === true || (t.done as any) === 'true'
-    if (isDone || t.estado === 'Omitida' || t.estado === 'Completada' || (t as any).es_padre === true) return false
+    const isDone = t.done === true || t.done === 'true'
+    if (isDone || t.estado === 'Omitida' || t.estado === 'Completada' || t.es_padre === true) return false
 
-    const excluidaHoy = !!t.excluir_plan && cleanDateValue((t as any).excluida_fecha) === today
+    const excluidaHoy = !!t.excluir_plan && cleanDateValue(t.excluida_fecha) === today
     if (excluidaHoy) return false
 
     // Si tiene fecha planificada:
@@ -1029,9 +628,9 @@ export default function Home() {
 
   function getFiltered(all: Tarea[]): Tarea[] {
     const result = all.filter(t => {
-      const isDone = t.done === true || (t.done as any) === 'true'
+      const isDone = t.done === true || t.done === 'true'
       const isInactive = isDone || t.estado === 'Omitida' || t.estado === 'Completada'
-      const isParent = (t as any).es_padre === true
+      const isParent = t.es_padre === true
       if (isParent) return false
 
       const normalized = { ...t, done: isDone }
@@ -1061,13 +660,13 @@ export default function Home() {
     })
 
     if (sortCol) {
-      result.sort((a: any, b: any) => {
-        let av = a[sortCol]
-        let bv = b[sortCol]
+      result.sort((a, b) => {
+        let av = a[sortCol as keyof Tarea]
+        let bv = b[sortCol as keyof Tarea]
 
         if (sortCol === 'deadline' || sortCol === 'fecha_solicitud' || sortCol === 'fecha_finalizacion' || sortCol === 'fecha_planificada') {
-          av = cleanDateValue(av) || '9999-12-31'
-          bv = cleanDateValue(bv) || '9999-12-31'
+          av = cleanDateValue(String(av || '')) || '9999-12-31'
+          bv = cleanDateValue(String(bv || '')) || '9999-12-31'
         } else if (sortCol === 'tiempo_estimado' || sortCol === 'tiempo_real') {
           av = Number(av || 0)
           bv = Number(bv || 0)
@@ -1087,7 +686,7 @@ export default function Home() {
   const filtered = getFiltered(tareas)
   const isInactiveForPlan = (t: Tarea) =>
     t.done === true ||
-    (t.done as any) === 'true' ||
+    t.done === 'true' ||
     t.estado === 'Completada' ||
     t.estado === 'Omitida'
 
@@ -1099,10 +698,10 @@ export default function Home() {
         ...filtered
           .filter(t => isInactiveForPlan(t))
           .sort((a, b) => {
-            const aTime = String((a as any).hora_finalizacion || '')
-            const bTime = String((b as any).hora_finalizacion || '')
-            const aDate = cleanDateValue((a as any).fecha_finalizacion)
-            const bDate = cleanDateValue((b as any).fecha_finalizacion)
+            const aTime = String(a.hora_finalizacion || '')
+            const bTime = String(b.hora_finalizacion || '')
+            const aDate = cleanDateValue(a.fecha_finalizacion)
+            const bDate = cleanDateValue(b.fecha_finalizacion)
 
             // Completadas/omitidas abajo, ordenadas por finalización:
             // primera terminada arriba, última terminada abajo.
@@ -1111,7 +710,7 @@ export default function Home() {
 
             if (aKey < bKey) return -1
             if (aKey > bKey) return 1
-            return ((a as any).id || 0) - ((b as any).id || 0)
+            return (a.id || 0) - (b.id || 0)
           }),
       ]
     : filtered
@@ -1141,20 +740,20 @@ export default function Home() {
 
   function clearFilters() { setFTarea(''); setFTipo(new Set()); setFEstado(new Set()); setFFechaSol(new Set()); setFDeadline(new Set()); setFFechaFin(new Set()); setSortCol(null) }
 
-  const tareasNoPadre = tareas.filter(t => (t as any).es_padre !== true)
+  const tareasNoPadre = tareas.filter(t => t.es_padre !== true)
 
   const stats = {
-    activas: tareasNoPadre.filter(t => t.done !== true && (t.done as any) !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').length,
+    activas: tareasNoPadre.filter(t => t.done !== true && t.done !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').length,
     plan: tareasNoPadre.filter(t => isEnPlan(t)).length,
-    completadas: tareasNoPadre.filter(t => t.done === true || (t.done as any) === 'true' || t.estado === 'Omitida' || t.estado === 'Completada').length,
-    minutos: tareasNoPadre.filter(t => t.done !== true && (t.done as any) !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').reduce((s, t) => s + (t.tiempo_estimado||0), 0),
+    completadas: tareasNoPadre.filter(t => t.done === true || t.done === 'true' || t.estado === 'Omitida' || t.estado === 'Completada').length,
+    minutos: tareasNoPadre.filter(t => t.done !== true && t.done !== 'true' && t.estado !== 'Omitida' && t.estado !== 'Completada').reduce((s, t) => s + (t.tiempo_estimado||0), 0),
   }
 
   const tabCount = (key: string) => {
     if (key==='Todas') return stats.activas
     if (key==='Plan') return stats.plan
     if (key==='Completadas') return stats.completadas
-    if (key==='Carga' || key==='Ejecucion' || key==='Calendario') return 0
+    if (key==='Carga') return 0
     if (key==='Rutinaria') return tareasNoPadre.filter(x => RUTINARIAS.includes(x.tipo) && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
     return tareasNoPadre.filter(x => x.tipo===key && !x.done && x.estado !== 'Omitida' && x.estado !== 'Completada' && !isEnPlan(x)).length
   }
@@ -1278,7 +877,7 @@ export default function Home() {
       .update({ excluir_plan: true })
       .or(`estado.eq.Completada,estado.eq.Omitida`)
       .lt('fecha_finalizacion', today)
-      .neq('fecha_finalizacion', null as any)
+      .not('fecha_finalizacion', 'is', null)
 
     // Reset excluir_plan for active tasks excluded on previous days.
     // Así, si siguen retrasadas, vuelven al Plan del día al día siguiente.
@@ -1406,156 +1005,6 @@ export default function Home() {
     fetchTareas()
   }
 
-
-  function startCrono() {
-    if (cronoRunning) return
-
-    const startedAt = Date.now()
-    cronoStartRef.current = startedAt - cronoSeconds * 1000
-
-    localStorage.setItem('gestor_crono_date', today)
-    localStorage.setItem('gestor_crono_running', 'true')
-    localStorage.setItem('gestor_crono_base_seconds', String(cronoSeconds))
-    localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-    localStorage.setItem('gestor_crono_started_at', String(startedAt))
-
-    cronoRef.current = setInterval(() => {
-      const next = Math.floor((Date.now() - cronoStartRef.current!) / 1000)
-      setCronoSeconds(next)
-      localStorage.setItem('gestor_crono_seconds_live', String(next))
-    }, 1000)
-
-    setCronoRunning(true)
-  }
-
-  // Ajustar cronómetro según hora de fichaje real
-  function adjustCronoFromStart(hhmm: string) {
-    if (!hhmm) return
-    const [h, m] = hhmm.split(':').map(Number)
-    if (isNaN(h) || isNaN(m)) return
-    const now = new Date()
-    const startDate = new Date()
-    startDate.setHours(h, m, 0, 0)
-    const elapsedSecs = Math.max(0, Math.floor((now.getTime() - startDate.getTime()) / 1000))
-
-    // Guardamos la hora manual de inicio para que, si luego marcas una hora de fin,
-    // el cronómetro sea exactamente Fin - Inicio y no arrastre acumulados anteriores.
-    localStorage.setItem('gestor_crono_date', today)
-    localStorage.setItem('gestor_crono_manual_start', hhmm)
-
-    setCronoSeconds(elapsedSecs)
-    localStorage.setItem('gestor_crono_seconds', String(elapsedSecs))
-    localStorage.setItem('gestor_crono_base_seconds', String(elapsedSecs))
-    if (cronoRunning) {
-      // Re-anchor running timer
-      cronoStartRef.current = Date.now() - elapsedSecs * 1000
-      const startedAt = Date.now()
-      localStorage.setItem('gestor_crono_running', 'true')
-      localStorage.setItem('gestor_crono_base_seconds', String(elapsedSecs))
-      localStorage.setItem('gestor_crono_started_at', String(startedAt))
-    }
-  }
-
-  // Ajustar cronómetro según hora de fin real.
-  // Si antes has puesto hora de Inicio, calcula exactamente Fin - Inicio.
-  // Así evita arrastrar segundos acumulados antiguos del localStorage.
-  function adjustCronoToEnd(hhmm: string) {
-    if (!hhmm) return
-    const [h, m] = hhmm.split(':').map(Number)
-    if (isNaN(h) || isNaN(m)) return
-
-    const manualStart = localStorage.getItem('gestor_crono_manual_start')
-
-    let adjusted = 0
-
-    if (manualStart) {
-      const [sh, sm] = manualStart.split(':').map(Number)
-      if (!isNaN(sh) && !isNaN(sm)) {
-        const startDate = new Date()
-        startDate.setHours(sh, sm, 0, 0)
-
-        const endDate = new Date()
-        endDate.setHours(h, m, 0, 0)
-
-        // Por si alguna vez marcas un fin pasada medianoche.
-        if (endDate.getTime() < startDate.getTime()) {
-          endDate.setDate(endDate.getDate() + 1)
-        }
-
-        adjusted = Math.max(0, Math.floor((endDate.getTime() - startDate.getTime()) / 1000))
-      }
-    }
-
-    if (!manualStart) {
-      const now = new Date()
-      const endDate = new Date()
-      endDate.setHours(h, m, 0, 0)
-
-      const secondsAfterEnd = Math.max(0, Math.floor((now.getTime() - endDate.getTime()) / 1000))
-      adjusted = Math.max(0, cronoSeconds - secondsAfterEnd)
-    }
-
-    if (cronoRef.current) clearInterval(cronoRef.current)
-
-    setCronoSeconds(adjusted)
-    setCronoRunning(false)
-    cronoStartRef.current = null
-
-    localStorage.setItem('gestor_crono_running', 'false')
-    localStorage.setItem('gestor_crono_seconds', String(adjusted))
-    localStorage.setItem('gestor_crono_base_seconds', String(adjusted))
-    localStorage.removeItem('gestor_crono_started_at')
-    localStorage.removeItem('gestor_crono_seconds_live')
-    localStorage.removeItem('gestor_crono_manual_start')
-
-    saveCronoToday(Math.floor(adjusted / 60))
-  }
-
-  function pauseCrono() {
-    if (cronoRef.current) clearInterval(cronoRef.current)
-
-    localStorage.setItem('gestor_crono_date', today)
-    localStorage.setItem('gestor_crono_running', 'false')
-    localStorage.setItem('gestor_crono_seconds', String(cronoSeconds))
-    localStorage.setItem('gestor_crono_base_seconds', String(cronoSeconds))
-    localStorage.removeItem('gestor_crono_started_at')
-    localStorage.removeItem('gestor_crono_seconds_live')
-
-    setCronoRunning(false)
-    saveCronoToday(Math.floor(cronoSeconds / 60))
-  }
-
-  function resetCrono() {
-    if (cronoRef.current) clearInterval(cronoRef.current)
-
-    localStorage.setItem('gestor_crono_date', today)
-    localStorage.setItem('gestor_crono_running', 'false')
-    localStorage.setItem('gestor_crono_seconds', '0')
-    localStorage.setItem('gestor_crono_base_seconds', '0')
-    localStorage.removeItem('gestor_crono_started_at')
-    localStorage.removeItem('gestor_crono_seconds_live')
-
-    setCronoRunning(false)
-    setCronoSeconds(0)
-    cronoStartRef.current = null
-  }
-
-  async function saveCronoToday(minutos: number) {
-    localStorage.setItem('gestor_crono_date', today)
-    await supabase.from('jornadas').upsert(
-      { fecha: today, minutos_fichados: minutos },
-      { onConflict: 'fecha' }
-    )
-  }
-
-  function formatCrono(secs: number): string {
-    const h = Math.floor(secs / 3600)
-    const m = Math.floor((secs % 3600) / 60)
-    const s = secs % 60
-    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-  }
-
   function validate() {
     const e: Record<string,string> = {}
     if (!form.tarea.trim()) e.tarea = 'Obligatorio'
@@ -1595,7 +1044,7 @@ export default function Home() {
     if (t.deadline && t.deadline < today && !t.done && t.estado !== 'Omitida') {
       if (!confirm(`Esta tarea tiene ${diasRetrasoFn(t.deadline, today)} día(s) de retraso. ¿Quieres editarla de todas formas?`)) return
     }
-    setForm({ tipo:t.tipo, tarea:t.tarea, notas:t.notas||'', prioridad:t.prioridad, estado:t.estado, tiempo_estimado:t.tiempo_estimado, tiempo_real:t.tiempo_real||0, fecha_solicitud:t.fecha_solicitud||'', deadline:t.deadline||'', fecha_planificada:t.fecha_planificada||'', fecha_finalizacion:t.fecha_finalizacion||'', done:t.done, solicitado_por:(t as any).solicitado_por||'', orden:t.orden||0, en_plan:t.en_plan||false, excluir_plan:t.excluir_plan||false })
+    setForm({ tipo:t.tipo, tarea:t.tarea, notas:t.notas||'', prioridad:t.prioridad, estado:t.estado, tiempo_estimado:t.tiempo_estimado, tiempo_real:t.tiempo_real||0, fecha_solicitud:t.fecha_solicitud||'', deadline:t.deadline||'', fecha_planificada:t.fecha_planificada||'', fecha_finalizacion:t.fecha_finalizacion||'', done:t.done, solicitado_por:t.solicitado_por||'', orden:t.orden||0, en_plan:t.en_plan||false, excluir_plan:t.excluir_plan||false })
     setErrors({}); setEditId(t.id); setModal(true)
   }
 
@@ -1796,7 +1245,7 @@ export default function Home() {
 
   function exportCSV() {
     const header = MASTER_COLS.map(c => c.label).join(';')
-    const rows = tareas.map(t => [t.tipo,t.tarea,t.notas||'',(t as any).solicitado_por||'',t.prioridad,t.estado,t.tiempo_estimado||0,t.tiempo_real||0,fDate(t.fecha_solicitud),fDate(t.deadline),fDate(t.fecha_planificada||'')].join(';'))
+    const rows = tareas.map(t => [t.tipo,t.tarea,t.notas||'',t.solicitado_por||'',t.prioridad,t.estado,t.tiempo_estimado||0,t.tiempo_real||0,fDate(t.fecha_solicitud),fDate(t.deadline),fDate(t.fecha_planificada||'')].join(';'))
     const blob = new Blob(['\ufeff' + [header,...rows].join('\n')], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a'); a.href=url; a.download=`tareas_${today}.csv`; a.click()
@@ -1821,8 +1270,8 @@ export default function Home() {
     const isHint = second[0] && (second[0].includes('/')||second[0].toLowerCase().includes('texto')||second[0].toLowerCase().includes('número'))
     const dataStart = isHint ? 2 : 1
 
-    const inserts: any[] = []
-    const duplicates: any[] = []
+    const inserts: (TareaImportPayload & { orden: number })[] = []
+    const duplicates: DuplicateImport[] = []
     const errs: string[] = []
     const seenCsv = new Set<string>()
     const maxOrden = tareas.length > 0 ? Math.max(...tareas.map(t => t.orden||0)) : 0
@@ -1871,7 +1320,7 @@ export default function Home() {
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  async function handleConfirmOverwrite(selected: any[]) {
+  async function handleConfirmOverwrite(selected: DuplicateImport[]) {
     if (!selected.length) return
 
     setDeleting(true)
@@ -1888,7 +1337,7 @@ export default function Home() {
     fetchTareas()
   }
 
-  async function handleImportDuplicatesAnyway(selected: any[]) {
+  async function handleImportDuplicatesAnyway(selected: DuplicateImport[]) {
     if (!selected.length) return
 
     setDeleting(true)
@@ -1916,7 +1365,7 @@ export default function Home() {
 
   const showNewBtn = !['Completadas','Rutinaria','Casa'].includes(tab)
 
-  const ResizeHandle = ({ col }: { col: number }) => (
+  const renderResizeHandle = (col: number) => (
     <span
       onMouseDown={(e) => {
         e.preventDefault()
@@ -1929,6 +1378,93 @@ export default function Home() {
       <span className="absolute right-0 top-2 bottom-2 w-px bg-gray-200 group-hover/resize:bg-gray-500 transition-colors"></span>
     </span>
   )
+
+  if (!activeModule) {
+    return (
+      <main className="min-h-screen bg-gray-50/60 text-gray-900">
+        <div className="border-b border-gray-100 bg-white/90 backdrop-blur">
+          <div className="max-w-screen-2xl mx-auto px-6 lg:px-12 h-14 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 rounded-md bg-gray-900 flex items-center justify-center flex-shrink-0">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              </div>
+              <span className="font-semibold text-gray-900 text-sm tracking-tight">Gestor hogar</span>
+            </div>
+            <span className="text-gray-400 text-xs" suppressHydrationWarning>{new Date().toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</span>
+          </div>
+        </div>
+
+        <div className="max-w-screen-2xl mx-auto px-6 lg:px-12 pt-10 pb-16">
+          <div className="mb-8 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-5">
+            <div>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Casa</div>
+              <h1 className="text-3xl font-bold text-gray-950 tracking-tight">Panel de casa</h1>
+              <p className="text-sm text-gray-500 mt-2 max-w-2xl">Tus áreas principales en una sola entrada, con tareas ya funcionando y el resto preparado para crecer.</p>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white">5 apartados</span>
+              <span className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white">1 activo</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+            {MODULES.map(module => {
+              const enabled = module.key === 'tareas'
+              return (
+                <button
+                  key={module.key}
+                  onClick={() => enabled ? setActiveModule(module.key) : setActiveModule(module.key)}
+                  className={`group relative overflow-hidden border rounded-xl bg-white p-5 text-left transition min-h-[172px] ${enabled ? 'border-gray-200 shadow-sm hover:border-gray-300 hover:shadow-md' : 'border-gray-100 hover:border-gray-200 hover:shadow-sm'}`}
+                >
+                  <div className={`absolute inset-x-0 top-0 h-1 ${module.accent}`}></div>
+                  <div className="flex h-full flex-col justify-between gap-6">
+                    <div>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{module.meta}</div>
+                          <div className="text-lg font-bold text-gray-950 mt-1">{module.label}</div>
+                        </div>
+                        <span className={`text-[11px] px-2 py-1 rounded-lg font-semibold ${module.tone}`}>{module.status}</span>
+                      </div>
+                      <div className="text-sm text-gray-500 mt-4 leading-relaxed">{module.description}</div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={enabled ? 'text-gray-900 font-semibold' : 'text-gray-400 font-medium'}>
+                        {enabled ? 'Abrir' : 'Pendiente'}
+                      </span>
+                      <span className={`w-7 h-7 rounded-lg flex items-center justify-center transition ${enabled ? 'bg-gray-900 text-white group-hover:bg-gray-700' : 'bg-gray-50 text-gray-300 group-hover:text-gray-400'}`}>→</span>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  if (activeModule !== 'tareas') {
+    const activeModuleMeta = MODULES.find(item => item.key === activeModule)
+    return (
+      <main className="min-h-screen bg-white text-gray-900">
+        <div className="border-b border-gray-100 bg-white">
+          <div className="max-w-screen-2xl mx-auto px-12 h-14 flex items-center justify-between">
+            <button onClick={() => setActiveModule(null)} className="text-xs text-gray-500 hover:text-gray-900 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">Volver</button>
+            <span className="font-semibold text-gray-900 text-sm tracking-tight">{activeModuleMeta?.label}</span>
+            <span className="w-[70px]"></span>
+          </div>
+        </div>
+        <div className="max-w-screen-2xl mx-auto px-12 pt-10 pb-16">
+          <div className="border border-dashed border-gray-200 rounded-xl p-10 bg-gray-50/50">
+            <div className="text-lg font-bold text-gray-900">{activeModuleMeta?.label}</div>
+            <p className="text-sm text-gray-400 mt-2 max-w-xl">{activeModuleMeta?.description}</p>
+            <div className="mt-5 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pendiente de desarrollar</div>
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-white text-gray-900">
@@ -1977,7 +1513,8 @@ export default function Home() {
             <div className="w-6 h-6 rounded-md bg-gray-900 flex items-center justify-center flex-shrink-0">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             </div>
-            <span className="font-semibold text-gray-900 text-sm tracking-tight">Gestor de Tareas</span>
+            <button onClick={() => setActiveModule(null)} className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 transition">Inicio</button>
+            <span className="font-semibold text-gray-900 text-sm tracking-tight">Tareas</span>
             <span className="text-gray-200">·</span>
             <span className="text-gray-400 text-xs capitalize" suppressHydrationWarning>{new Date().toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</span>
           </div>
@@ -1987,9 +1524,6 @@ export default function Home() {
               <button onClick={downloadHojaTrabajo} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">Hoja de trabajo</button>
               <button onClick={()=>{setImportResult(null);setImportModal(true)}} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↑ Importar</button>
               <button onClick={exportCSV} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">↓ Exportar</button>
-              {tab === 'Plan' && filtered.some(t => (t.done===true||(t.done as any)==='true'||t.estado==='Completada'||t.estado==='Omitida') && t.fecha_finalizacion===today) && (
-                <button onClick={archivarDia} className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition font-medium">Archivar día</button>
-              )}
               {showNewBtn&&<button onClick={openNew} className="text-xs text-white bg-gray-900 hover:bg-gray-700 px-4 py-1.5 rounded-lg transition font-semibold">+ Nueva tarea</button>}
             </>}
           </div>
@@ -2001,12 +1535,12 @@ export default function Home() {
         <div className="mb-8 space-y-2">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-0.5 flex-wrap">
-              {TABS.filter(t=>!['Carga','Ejecucion','Calendario'].includes(t.key)).map(({key,label,emoji,sub})=>{
+              {TABS.map(({key,label,emoji,sub})=>{
                 const count=tabCount(key); const isActive=tab===key
                 return(
                   <button key={key} onClick={()=>setTab(key)} title={sub||undefined}
                     className={`px-3.5 py-2 rounded-lg text-sm transition font-medium flex items-center gap-2 ${isActive?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}>
-                    <span>{emoji}</span>
+                    {emoji && <span>{emoji}</span>}
                     <span className="flex items-baseline gap-1.5">
                       {label}
                       {sub&&<span className={`text-[10px] font-normal ${isActive?'text-white/60':'text-gray-300'}`}>{sub}</span>}
@@ -2016,30 +1550,16 @@ export default function Home() {
                 )
               })}
             </div>
-            {hasFilters&&tab!=='Carga'&&tab!=='Ejecucion'&&tab!=='Calendario'&&(
+            {hasFilters&&tab!=='Carga'&&(
               <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">Limpiar filtros</button>
             )}
           </div>
-
-          <div className="flex items-center gap-0.5 flex-wrap">
-            {TABS.filter(t=>['Ejecucion','Carga','Calendario'].includes(t.key)).map(({key,label,emoji,sub})=>{
-              const count=tabCount(key); const isActive=tab===key
-              return(
-                <button key={key} onClick={()=>setTab(key)} title={sub||undefined}
-                  className={`px-3.5 py-2 rounded-lg text-sm transition font-medium flex items-center gap-2 ${isActive?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}>
-                  <span>{emoji}</span>
-                  <span className="flex items-baseline gap-1.5">{label}</span>
-                  {count>0&&<span className={`text-xs px-1.5 py-0.5 rounded-md font-semibold ${isActive?'bg-white/20 text-white':'bg-gray-100 text-gray-400'}`}>{count}</span>}
-                </button>
-              )
-            })}
-          </div>
         </div>
 
-        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : tab === 'Ejecucion' ? <Ejecucion onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} jornadaMin={previsionMin} cronoSeconds={cronoSeconds} /> : tab === 'Calendario' ? <CalendarioVisual tareas={tareas} onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} /> : <>
+        {tab === 'Carga' ? <CargaTrabajo onEditTarea={(id) => { const t = tareas.find(x => x.id === id); if (t) openEdit(t) }} refreshKey={cargaRefreshKey} /> : <>
 
         {tab === 'Plan' ? (
-          <PlanKpis tareas={tareas} filtered={filtered} cronoSeconds={cronoSeconds} cronoRunning={cronoRunning} onStart={startCrono} onPause={pauseCrono} onReset={resetCrono} formatCrono={formatCrono} today={today} previsionMin={previsionMin} setPrevisionMin={setPrevisionMin} onAdjustStart={adjustCronoFromStart} onAdjustEnd={adjustCronoToEnd}/>
+          <PlanKpis filtered={filtered}/>
         ) : (
           <GeneralKpis tareas={tareas} filtered={filtered} tab={tab} today={today}/>
         )}
@@ -2060,46 +1580,46 @@ export default function Home() {
               <tr className="border-b border-gray-200 bg-white" style={{height:44,whiteSpace:'nowrap'}}>
                 <th className="relative px-3 select-none text-center">
                   <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</span>
-                  <ResizeHandle col={0}/>
+                  {renderResizeHandle(0)}
                 </th>
                 <th className="relative px-4 select-none text-center">
                   <ColFilter label="Tipo" options={tipoOpts} value={fTipo} onChange={setFTipo} onSort={()=>handleSort('tipo')} sortDir={sortDir} isSorted={sortCol==='tipo'}/>
-                  <ResizeHandle col={1}/>
+                  {renderResizeHandle(1)}
                 </th>
                 <th className="relative px-4 select-none text-center">
                   <TextFilter value={fTarea} onChange={setFTarea} onSort={()=>handleSort('tarea')} sortDir={sortDir} isSorted={sortCol==='tarea'}/>
-                  <ResizeHandle col={2}/>
+                  {renderResizeHandle(2)}
                 </th>
                 <th className="relative px-4 select-none text-center">
                   <ColFilter label="F. Solic." options={fechaSolOpts} value={fFechaSol} onChange={setFFechaSol} onSort={()=>handleSort('fecha_solicitud')} sortDir={sortDir} isSorted={sortCol==='fecha_solicitud'}/>
-                  <ResizeHandle col={3}/>
+                  {renderResizeHandle(3)}
                 </th>
                 <th className="relative px-4 select-none text-center">
                   <ColFilter label="Deadline" options={deadlineOpts} value={fDeadline} onChange={setFDeadline} onSort={()=>handleSort('deadline')} sortDir={sortDir} isSorted={sortCol==='deadline'}/>
-                  <ResizeHandle col={4}/>
+                  {renderResizeHandle(4)}
                 </th>
                 <th className="relative px-3 text-center select-none">
                   <button onClick={()=>handleSort('tiempo_estimado')} className="flex items-center gap-1 mx-auto text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600">
                     Est.{sortCol==='tiempo_estimado'&&<span>{sortDir==='asc'?'↑':'↓'}</span>}
                   </button>
-                  <ResizeHandle col={5}/>
+                  {renderResizeHandle(5)}
                 </th>
                 <th className="relative px-3 text-center select-none">
                   <button onClick={()=>handleSort('tiempo_real')} className="flex items-center gap-1 mx-auto text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600">
                     Real{sortCol==='tiempo_real'&&<span>{sortDir==='asc'?'↑':'↓'}</span>}
                   </button>
-                  <ResizeHandle col={6}/>
+                  {renderResizeHandle(6)}
                 </th>
                 <th className="relative px-3 text-center select-none">
                   <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Dif.</span>
-                  <ResizeHandle col={7}/>
+                  {renderResizeHandle(7)}
                 </th>
                 <th className="relative px-4 select-none text-center">
                   <ColFilter label="Estado" options={estadoOpts} value={fEstado} onChange={setFEstado} onSort={()=>handleSort('estado')} sortDir={sortDir} isSorted={sortCol==='estado'}/>
-                  <ResizeHandle col={8}/>
+                  {renderResizeHandle(8)}
                 </th>
                 <th className="relative px-3 select-none text-center">
-                  <ResizeHandle col={9}/>
+                  {renderResizeHandle(9)}
                 </th>
               </tr>
             </thead>
@@ -2111,12 +1631,12 @@ export default function Home() {
               ):displayFiltered.length===0?(
                 <tr><td colSpan={10} className="text-center py-20 text-sm">
                   <div className="flex flex-col items-center gap-2 text-gray-300">
-                    <span className="text-4xl">{tab==='Plan'?'☀️':tab==='Completadas'?'✓':'○'}</span>
+                    <span className="text-4xl">{tab==='Plan'?'Plan':tab==='Completadas'?'OK':'Sin'}</span>
                     <span>{hasFilters?'Sin resultados para estos filtros':tab==='Plan'?'Sin tareas para hoy':tab==='Completadas'?'Aún no hay completadas':'Sin tareas aquí'}</span>
                   </div>
                 </td></tr>
               ):displayFiltered.map((t,idx)=>{
-                const tIsInactive = t.done===true||(t.done as any)==='true'||t.estado==='Completada'||t.estado==='Omitida'
+                const tIsInactive = t.done===true||t.done==='true'||t.estado==='Completada'||t.estado==='Omitida'
                 const firstInactiveIdx = displayFiltered.findIndex(x => isInactiveForPlan(x))
                 const showDivider = tab==='Plan' && tIsInactive && idx===firstInactiveIdx
 
@@ -2128,8 +1648,7 @@ export default function Home() {
                 const dif=tReal>0?tReal-tEst:null
                 const autoplan=!!(t.deadline&&t.deadline<=today&&!t.done&&t.estado!=='Omitida')
                 const enplan=isEnPlan(t)
-                const excluido=!!t.excluir_plan
-                const isDone=t.done===true||(t.done as any)==='true'
+                const isDone=t.done===true||t.done==='true'
                 const isDragging=dragging===idx
                 const isOver=dragOverIdx===idx&&!isDragging
 
@@ -2167,7 +1686,7 @@ export default function Home() {
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
                           </button>
                           <button onClick={()=>omitTask(t)} title="Omitir"
-                            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition text-base">⏭</button>
+                            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition text-base">⏭</button>
                           <button onClick={()=>togglePlan(t)}
                             title={t.excluir_plan ? 'Volver al Plan del día' : autoplan ? 'Sacar del Plan del día' : enplan ? 'Quitar del Plan' : 'Añadir al Plan'}
                             className={`w-8 h-8 flex items-center justify-center rounded-lg transition ${t.excluir_plan ? 'text-gray-200 hover:text-gray-400 hover:bg-gray-50' : autoplan ? 'text-amber-400 hover:text-amber-600 hover:bg-amber-50' : enplan ? 'text-blue-500 bg-blue-50 hover:bg-blue-100' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
@@ -2219,15 +1738,15 @@ export default function Home() {
                       })()}
                     </td>
 
-                    <td className="px-3 text-center text-[11px] tabular-nums text-gray-500">{tEst?`${tEst}m`:'—'}</td>
-                    <td className="px-3 text-center text-[11px] tabular-nums text-gray-500">{tReal?`${tReal}m`:'—'}</td>
+                    <td className="px-3 text-center text-[11px] tabular-nums text-gray-500">{tEst?`${tEst}m`:'-'}</td>
+                    <td className="px-3 text-center text-[11px] tabular-nums text-gray-500">{tReal?`${tReal}m`:'-'}</td>
 
                     <td className="px-3 text-center">
                       {dif!==null?(
                         <span className={`text-xs font-semibold tabular-nums ${dif>0?'text-red-400':dif<0?'text-emerald-500':'text-gray-400'}`}>
                           {dif>0?`+${dif}m`:dif<0?`${dif}m`:'='}
                         </span>
-                      ):<span className="text-xs text-gray-200">—</span>}
+                      ):<span className="text-xs text-gray-200">-</span>}
                     </td>
 
                     <td className="px-4 text-center">
@@ -2250,7 +1769,7 @@ export default function Home() {
                           </svg>
                         </button>
 
-                        <button onClick={()=>openEdit(t)} title="Editar" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition">
+                        <button onClick={()=>openEdit(t)} title="Editar" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-rose-600 hover:bg-rose-50 transition">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
                         <button onClick={()=>deleteTask(t.id)} title="Eliminar" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-200 hover:text-red-400 hover:bg-red-50 transition">
@@ -2273,7 +1792,7 @@ export default function Home() {
           <div className="bg-white rounded-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto shadow-2xl border border-gray-100" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between px-7 py-5 border-b border-gray-100">
               <h2 className="text-base font-semibold text-gray-900">{editId?'Editar tarea':'Nueva tarea'}</h2>
-              <button onClick={()=>{setModal(false);setEditId(null)}} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition text-gray-400">✕</button>
+              <button onClick={()=>{setModal(false);setEditId(null)}} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition text-gray-400">x</button>
             </div>
             <div className="px-7 py-6 grid grid-cols-2 gap-5">
               <Field label="Tarea *" error={errors.tarea} full>
@@ -2347,7 +1866,7 @@ export default function Home() {
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-7 py-5 border-b border-gray-100">
               <h2 className="text-base font-semibold text-gray-900">Importar tareas</h2>
-              <button onClick={()=>setImportModal(false)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition text-gray-400">✕</button>
+              <button onClick={()=>setImportModal(false)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition text-gray-400">x</button>
             </div>
             <div className="px-7 py-6 space-y-5">
               {!importResult?(
@@ -2387,7 +1906,7 @@ export default function Home() {
                     </div>
                   )}
                   {importResult.duplicates.length>0&&(
-                    <DuplicateConfirm tasks={importResult.duplicates} onConfirm={handleConfirmOverwrite} onAddAnyway={handleImportDuplicatesAnyway} deleting={deleting}/>
+                    <DuplicateConfirm tasks={importResult.duplicates} onConfirm={handleConfirmOverwrite} onAddAnyway={handleImportDuplicatesAnyway}/>
                   )}
                   <button onClick={()=>setImportResult(null)} className="w-full text-xs text-gray-500 hover:text-gray-700 border border-gray-200 py-2 rounded-lg hover:bg-gray-50 transition">
                     Importar otro archivo
@@ -2545,7 +2064,7 @@ export default function Home() {
               <button onClick={confirmTiempoReal}
                 disabled={tiempoRealModal.action==='complete'&&(!tiempoRealInput||parseInt(tiempoRealInput)<=0)}
                 className={`px-5 py-2 rounded-lg text-sm font-semibold text-white transition disabled:opacity-40 ${tiempoRealModal.action==='complete'?'bg-emerald-500 hover:bg-emerald-600':'bg-gray-700 hover:bg-gray-600'}`}>
-                {tiempoRealModal.action==='complete'?'✓ Completar':'⏭ Omitir'}
+                {tiempoRealModal.action==='complete'?'OK Completar':'Omitir Omitir'}
               </button>
             </div>
           </div>
@@ -2555,7 +2074,7 @@ export default function Home() {
   )
 }
 
-function DuplicateConfirm({ tasks, onConfirm, onAddAnyway, deleting }: { tasks: any[], onConfirm: (items: any[]) => void, onAddAnyway: (items: any[]) => void, deleting: boolean }) {
+function DuplicateConfirm({ tasks, onConfirm, onAddAnyway }: { tasks: DuplicateImport[], onConfirm: (items: DuplicateImport[]) => void, onAddAnyway: (items: DuplicateImport[]) => void }) {
   const [selected, setSelected] = useState<Set<number>>(new Set())
 
   useEffect(() => {
@@ -2565,7 +2084,8 @@ function DuplicateConfirm({ tasks, onConfirm, onAddAnyway, deleting }: { tasks: 
   const toggle = (id: number) => {
     setSelected(prev => {
       const n = new Set(prev)
-      n.has(id) ? n.delete(id) : n.add(id)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
       return n
     })
   }
@@ -2583,8 +2103,8 @@ function DuplicateConfirm({ tasks, onConfirm, onAddAnyway, deleting }: { tasks: 
         {tasks.map(item => (
           <label key={item.id} className="flex items-center gap-2 cursor-pointer py-1 hover:bg-blue-100/50 px-1 rounded-lg">
             <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggle(item.id)} className="rounded"/>
-            <span className="text-xs text-gray-700 truncate">{shortTaskName(item.update?.tarea || item.tarea || '')}</span>
-            <span className="text-xs text-gray-400 ml-auto flex-shrink-0">{item.update?.tipo || item.tipo || ''}</span>
+            <span className="text-xs text-gray-700 truncate">{shortTaskName(item.update.tarea || item.actual.tarea || '')}</span>
+            <span className="text-xs text-gray-400 ml-auto flex-shrink-0">{item.update.tipo || item.actual.tipo || ''}</span>
           </label>
         ))}
       </div>
