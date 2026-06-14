@@ -77,7 +77,7 @@ const MODULES = [
   { key: 'tareas', label: 'Tareas', description: 'Plan, listado por vistas y carga de trabajo.', status: 'Activo', tone: 'bg-gray-900 text-white', accent: 'bg-gray-900', meta: 'Disponible' },
   { key: 'dinero', label: 'Dinero', description: 'Rendimientos, ingresos, gastos y evolución.', status: 'Pendiente', tone: 'bg-emerald-50 text-emerald-700', accent: 'bg-emerald-500', meta: 'Finanzas' },
   { key: 'salud', label: 'Salud y hábitos', description: 'Hábitos, musculación, indicadores y seguimiento.', status: 'Pendiente', tone: 'bg-rose-50 text-rose-700', accent: 'bg-rose-500', meta: 'Rutinas' },
-  { key: 'pareja', label: 'Pareja', description: 'Los 5 lenguajes del amor y señales de cuidado.', status: 'Pendiente', tone: 'bg-violet-50 text-violet-700', accent: 'bg-violet-500', meta: 'Cuidado' },
+  { key: 'pareja', label: 'Amor', description: 'Ciclo, lenguajes del amor y planes para cuidar la relación.', status: 'Activo', tone: 'bg-violet-50 text-violet-700', accent: 'bg-violet-500', meta: 'Cuidado' },
   { key: 'dentistas', label: 'Dentistas', description: 'Proyecto, tareas, hitos y próximos pasos.', status: 'Pendiente', tone: 'bg-sky-50 text-sky-700', accent: 'bg-sky-500', meta: 'Proyecto' },
 ]
 
@@ -266,6 +266,195 @@ function shortTaskName(tarea: string): string {
   const [, name, day, month] = match
   const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
   return `${name} · ${parseInt(day)} ${months[parseInt(month)-1]}`
+}
+
+function dateOnly(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function daysBetween(from: Date, to: Date) {
+  return Math.round((dateOnly(to).getTime() - dateOnly(from).getTime()) / 86400000)
+}
+
+function formatShortDate(value: string) {
+  return parseLocalDate(value).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+}
+
+const AMOR_CICLO = {
+  ultimaReal: '2026-05-23',
+  proximaEstimada: '2026-06-26',
+  chocolate: ['2026-06-24', '2026-06-25'],
+}
+
+const LOVE_LANGUAGES = [
+  { key: 'calidad', label: 'Tiempo de calidad', hint: 'Un rato sin móvil, paseo, cena o conversación tranquila.' },
+  { key: 'servicio', label: 'Actos de servicio', hint: 'Quitarle carga: resolver algo, ayudar o anticiparte.' },
+  { key: 'comunicacion', label: 'Comunicación', hint: 'Preguntar, escuchar y no ir directo a corregir.' },
+  { key: 'palabras', label: 'Palabras de afirmación', hint: 'Decir algo concreto que valoras de ella.' },
+  { key: 'contacto', label: 'Contacto físico', hint: 'Abrazo, mano, caricia o cercanía si le apetece.' },
+  { key: 'detalles', label: 'Detalles/regalos', hint: 'Chocolate, nota, flor, merienda o sorpresa pequeña.' },
+]
+
+const PLANES_AMOR = [
+  { tipo: 'Tranquilo', nombre: 'Paseo por Plaza del Pilar y ribera del Ebro', detalle: 'Plan suave para hablar, parar y acabar tomando algo.' },
+  { tipo: 'Cultural', nombre: 'Museo + café', detalle: 'Pablo Gargallo, Goya, CaixaForum o Pablo Serrano.' },
+  { tipo: 'Noche', nombre: 'Magia o monólogo', detalle: 'El Sótano Mágico, Teatro de las Esquinas o El Refugio del Crápula.' },
+  { tipo: 'Diferente', nombre: 'Taller creativo', detalle: 'Cerámica, pintura, vino y pintura o una cata tranquila.' },
+  { tipo: 'Escapada', nombre: 'Monasterio de Piedra o Albarracín', detalle: 'Para un día completo cuando haya energía y tiempo.' },
+]
+
+function AmorPanel({ onBack }: { onBack: () => void }) {
+  const [done, setDone] = useState<Set<string>>(new Set())
+  const today = dateOnly(new Date())
+  const lastPeriod = parseLocalDate(AMOR_CICLO.ultimaReal)
+  const nextPeriod = parseLocalDate(AMOR_CICLO.proximaEstimada)
+  const cycleDay = Math.max(1, daysBetween(lastPeriod, today) + 1)
+  const daysToPeriod = daysBetween(today, nextPeriod)
+  const cycleLength = Math.max(1, daysBetween(lastPeriod, nextPeriod))
+  const progress = Math.min(100, Math.max(0, Math.round((cycleDay / cycleLength) * 100)))
+
+  const phase = cycleDay <= 5
+    ? { name: 'Menstruación', tone: 'bg-rose-50 text-rose-700 border-rose-100', need: 'calma, descanso y cero presión' }
+    : cycleDay <= 12
+      ? { name: 'Folicular', tone: 'bg-emerald-50 text-emerald-700 border-emerald-100', need: 'planes ligeros, ilusión y energía compartida' }
+      : cycleDay <= 17
+        ? { name: 'Ovulación', tone: 'bg-sky-50 text-sky-700 border-sky-100', need: 'conexión, presencia y planes más sociales' }
+        : { name: 'Lútea', tone: 'bg-violet-50 text-violet-700 border-violet-100', need: 'paciencia, cariño estable y actos de servicio' }
+
+  const recommendations = [
+    'Hazle la vida un poco más fácil hoy con un acto de servicio pequeño.',
+    'Valida antes de solucionar: escucha, pregunta y acompaña.',
+    daysToPeriod <= 14 ? 'Plan mejor tranquilo que exigente: paseo, cena fácil o película.' : 'Puedes proponer algo con más movimiento si la notas con energía.',
+  ]
+
+  function toggle(key: string) {
+    setDone(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  return (
+    <main className="min-h-screen bg-gray-50/60 text-gray-900">
+      <div className="border-b border-gray-100 bg-white/90 backdrop-blur">
+        <div className="max-w-screen-2xl mx-auto px-6 lg:px-12 h-14 flex items-center justify-between">
+          <button onClick={onBack} className="text-xs text-gray-500 hover:text-gray-900 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition">Volver</button>
+          <span className="font-semibold text-gray-900 text-sm tracking-tight">Amor</span>
+          <span className="w-[70px]"></span>
+        </div>
+      </div>
+
+      <div className="max-w-screen-2xl mx-auto px-6 lg:px-12 pt-8 pb-16 space-y-6">
+        <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
+          <div>
+            <div className="text-xs font-semibold text-violet-500 uppercase tracking-wider mb-2">Cuidar la relación</div>
+            <h1 className="text-3xl font-bold text-gray-950 tracking-tight">Amor</h1>
+            <p className="text-sm text-gray-500 mt-2 max-w-2xl">Ciclo, gestos diarios, lenguajes del amor y planes para elegir mejor cómo estar presente.</p>
+          </div>
+          <div className="text-xs text-gray-400">Última regla real: {formatShortDate(AMOR_CICLO.ultimaReal)} · Próxima estimada: {formatShortDate(AMOR_CICLO.proximaEstimada)}</div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-2 border border-gray-100 rounded-xl bg-white p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-gray-500">Ciclo actual</div>
+                <div className="mt-2 text-3xl font-bold text-gray-950">Día {cycleDay}</div>
+              </div>
+              <span className={`text-xs font-semibold border rounded-lg px-3 py-1.5 ${phase.tone}`}>{phase.name}</span>
+            </div>
+            <div className="mt-5 h-2 rounded-full bg-gray-100 overflow-hidden">
+              <div className="h-full bg-gray-900 rounded-full" style={{ width: `${progress}%` }}></div>
+            </div>
+            <div className="mt-3 flex justify-between text-xs text-gray-400">
+              <span>{formatShortDate(AMOR_CICLO.ultimaReal)}</span>
+              <span>{daysToPeriod >= 0 ? `faltan ${daysToPeriod} días` : `${Math.abs(daysToPeriod)} días de retraso`}</span>
+              <span>{formatShortDate(AMOR_CICLO.proximaEstimada)}</span>
+            </div>
+          </div>
+
+          <div className="border border-gray-100 rounded-xl bg-white p-5">
+            <div className="text-sm font-semibold text-gray-500">Qué necesita más</div>
+            <div className="mt-3 text-xl font-bold text-gray-950 leading-snug">{phase.need}</div>
+            <p className="text-xs text-gray-400 mt-3">Orientativo, basado en el calendario que tienes en Excel.</p>
+          </div>
+
+          <div className="border border-gray-100 rounded-xl bg-white p-5">
+            <div className="text-sm font-semibold text-gray-500">Chocolate</div>
+            <div className="mt-3 text-xl font-bold text-gray-950">{AMOR_CICLO.chocolate.map(formatShortDate).join(' y ')}</div>
+            <p className="text-xs text-gray-400 mt-3">Tu forecast lo marca como señal premenstrual.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="border border-gray-100 rounded-xl bg-white p-5">
+            <div className="text-sm font-semibold text-gray-900 mb-4">Hoy, mejor así</div>
+            <div className="space-y-3">
+              {recommendations.map(item => (
+                <div key={item} className="flex gap-3 text-sm text-gray-600">
+                  <span className="mt-1 w-1.5 h-1.5 rounded-full bg-violet-400 flex-shrink-0"></span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="xl:col-span-2 border border-gray-100 rounded-xl bg-white p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="text-sm font-semibold text-gray-900">Lenguajes del amor</div>
+                <div className="text-xs text-gray-400 mt-1">{done.size}/{LOVE_LANGUAGES.length} cuidados marcados hoy</div>
+              </div>
+              <div className="text-xs text-gray-400">Del Excel Ilaria</div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {LOVE_LANGUAGES.map(item => {
+                const active = done.has(item.key)
+                return (
+                  <button key={item.key} onClick={() => toggle(item.key)}
+                    className={`text-left border rounded-xl p-4 transition ${active ? 'border-violet-200 bg-violet-50' : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'}`}>
+                    <div className="flex items-start gap-3">
+                      <span className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center text-xs ${active ? 'bg-violet-600 border-violet-600 text-white' : 'border-gray-200 text-transparent'}`}>✓</span>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">{item.label}</div>
+                        <div className="text-xs text-gray-400 mt-1 leading-relaxed">{item.hint}</div>
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="border border-gray-100 rounded-xl bg-white p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <div className="text-sm font-semibold text-gray-900">Planes</div>
+              <div className="text-xs text-gray-400 mt-1">Ideas sacadas de tu documento de planes.</div>
+            </div>
+            <span className="text-xs text-gray-400">{PLANES_AMOR.length} ideas</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+            {PLANES_AMOR.map(plan => (
+              <div key={plan.nombre} className="border border-gray-100 rounded-xl p-4 hover:border-gray-200 transition">
+                <div className="text-[11px] font-semibold text-violet-500 uppercase tracking-wider">{plan.tipo}</div>
+                <div className="text-sm font-bold text-gray-900 mt-2">{plan.nombre}</div>
+                <div className="text-xs text-gray-400 mt-2 leading-relaxed">{plan.detalle}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </main>
+  )
 }
 
 function ColFilter({ label, options, value, onChange, onSort, sortDir, isSorted }: {
@@ -1403,13 +1592,13 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <span className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white">5 apartados</span>
-              <span className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white">1 activo</span>
+              <span className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white">2 activos</span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
             {MODULES.map(module => {
-              const enabled = module.key === 'tareas'
+              const enabled = module.key === 'tareas' || module.key === 'pareja'
               return (
                 <button
                   key={module.key}
@@ -1442,6 +1631,10 @@ export default function Home() {
         </div>
       </main>
     )
+  }
+
+  if (activeModule === 'pareja') {
+    return <AmorPanel onBack={() => setActiveModule(null)} />
   }
 
   if (activeModule !== 'tareas') {
