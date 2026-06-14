@@ -26,7 +26,7 @@ const TIPO_COLORS: Record<string, string> = {
   'Operativa': 'bg-sky-400',
   'Táctica': 'bg-violet-400',
   'Estratégica': 'bg-amber-400',
-  'Diaria': 'bg-gray-300',
+  'Trimestral': 'bg-gray-300',
   'Semanal': 'bg-gray-400',
   'Mensual': 'bg-gray-500',
 }
@@ -34,7 +34,7 @@ const TIPO_TEXT: Record<string, string> = {
   'Operativa': 'text-sky-700',
   'Táctica': 'text-violet-700',
   'Estratégica': 'text-amber-700',
-  'Diaria': 'text-gray-500',
+  'Trimestral': 'text-gray-500',
   'Semanal': 'text-gray-600',
   'Mensual': 'text-gray-700',
 }
@@ -81,7 +81,7 @@ function planningDate(t: Tarea): string | null {
 
 const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
-const TIPOS_FILTRO = ['Diaria', 'Semanal', 'Mensual', 'Operativa', 'Táctica', 'Estratégica']
+const TIPOS_FILTRO = ['Semanal', 'Mensual', 'Trimestral', 'Operativa', 'Táctica', 'Estratégica']
 type AtrasoFilter = 'todas' | 'retrasadas' | 'no_retrasadas'
 
 type Props = {

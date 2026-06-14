@@ -33,8 +33,8 @@ type Tarea = {
 }
 
 const TIPOS_FORM = ['Operativa', 'Táctica', 'Estratégica']
-const TIPOS_ALL  = ['Diaria', 'Semanal', 'Mensual', 'Operativa', 'Táctica', 'Estratégica']
-const RUTINARIAS = ['Diaria', 'Semanal', 'Mensual']
+const TIPOS_ALL  = ['Semanal', 'Mensual', 'Trimestral', 'Operativa', 'Táctica', 'Estratégica']
+const RUTINARIAS = ['Semanal', 'Mensual', 'Trimestral']
 const ESTADOS    = ['Pendiente', 'En espera', 'En progreso', 'Completada', 'Omitida']
 const PRIORIDADES = ['Alta', 'Media', 'Baja']
 
@@ -61,9 +61,9 @@ const TIPO_COLORS: Record<string, { bg: string, text: string, dot: string }> = {
   Operativa:   { bg: 'bg-sky-50',     text: 'text-sky-700',     dot: 'bg-sky-400' },
   'Táctica':     { bg: 'bg-violet-50',  text: 'text-violet-700',  dot: 'bg-violet-400' },
   'Estratégica': { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400' },
-  Diaria:      { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-400' },
   Semanal:     { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-500' },
   Mensual:     { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-600' },
+  Trimestral:  { bg: 'bg-gray-100',   text: 'text-gray-600',    dot: 'bg-gray-700' },
 }
 
 const ESTADO_COLORS: Record<string, { bg: string, text: string }> = {
@@ -75,7 +75,7 @@ const ESTADO_COLORS: Record<string, { bg: string, text: string }> = {
 }
 
 const MASTER_COLS = [
-  { key: 'tipo',            label: 'tipo *',            hint: 'Diaria / Semanal / Mensual / Operativa / Táctica / Estratégica' },
+  { key: 'tipo',            label: 'tipo *',            hint: 'Semanal / Mensual / Trimestral / Operativa / Táctica / Estratégica' },
   { key: 'tarea',           label: 'tarea *',           hint: 'Texto libre con fecha al final. Ej: Fichar entrada 01/06/2026' },
   { key: 'notas',           label: 'notas',             hint: 'Texto libre' },
   { key: 'solicitado_por',  label: 'solicitado_por *',  hint: 'Nombre o equipo' },

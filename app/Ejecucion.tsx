@@ -42,7 +42,7 @@ const TIPO_DOT: Record<string, string> = {
   Operativa: 'bg-sky-400',
   Táctica: 'bg-violet-400',
   Estratégica: 'bg-amber-400',
-  Diaria: 'bg-gray-400',
+  Trimestral: 'bg-gray-400',
   Semanal: 'bg-gray-500',
   Mensual: 'bg-gray-600',
 }
