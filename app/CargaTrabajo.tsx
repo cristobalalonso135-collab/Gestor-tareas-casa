@@ -173,11 +173,14 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
     localStorage.setItem('carga_capacity_overrides', JSON.stringify(capacityOverrides))
   }, [capacityOverrides])
 
-  function defaultCapacityForDate(d: Date): number {
-    // Capacidad por defecto:
-    // L-V = 5h, S-D = 2h.
-    return (d.getDay() === 0 || d.getDay() === 6) ? 120 : 300
-  }
+function defaultCapacityForDate(d: Date): number {
+  const day = d.getDay()
+
+  if (day === 0) return 150 // domingo 2h30
+  if (day === 6) return 240 // sábado 4h
+
+  return 90 // lunes-viernes 1h30
+}
 
   function capacityForDate(d: Date): number {
     const key = dateKey(d)
