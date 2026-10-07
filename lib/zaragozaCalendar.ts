@@ -112,7 +112,48 @@ export function lastZaragozaWorkdaysFrom(fromIso: string, months = LAST_WORKDAY_
   return dates
 }
 
-export type RoutineRepeat = 'no' | 'workdays' | 'weekly' | 'weekdays' | 'biweekly' | 'last-workday' | 'monthly'
+function lastSundayIso(year: number, monthIndex0: number): string {
+  const last = new Date(year, monthIndex0 + 1, 0)
+  last.setDate(last.getDate() - last.getDay())
+  return dateKey(last)
+}
+
+function lastSundaysFrom(fromIso: string, months = LAST_WORKDAY_ROUTINE_MONTHS): string[] {
+  const from = String(fromIso || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return []
+  const start = new Date(`${from}T00:00:00`)
+  if (Number.isNaN(start.getTime())) return []
+  const dates: string[] = []
+  let year = start.getFullYear()
+  let month = start.getMonth()
+  for (let i = 0; i < months + 2 && dates.length < months; i += 1) {
+    const day = lastSundayIso(year, month)
+    if (day >= from) dates.push(day)
+    month += 1
+    if (month > 11) {
+      month = 0
+      year += 1
+    }
+  }
+  return dates
+}
+
+function nextLastSunday(current: string, from: Date): string | null {
+  let year = from.getFullYear()
+  let month = from.getMonth()
+  for (let i = 0; i < 24; i += 1) {
+    const day = lastSundayIso(year, month)
+    if (day > current) return day
+    month += 1
+    if (month > 11) {
+      month = 0
+      year += 1
+    }
+  }
+  return null
+}
+
+export type RoutineRepeat = 'no' | 'workdays' | 'weekly' | 'weekdays' | 'biweekly' | 'last-workday' | 'last-sunday' | 'monthly'
 export type ActiveRoutineRepeat = Exclude<RoutineRepeat, 'no'>
 export type ParsedRoutineRepeat = { repeat: ActiveRoutineRepeat, weekdays: number[] }
 
@@ -123,6 +164,7 @@ export const ROUTINE_REPEAT_OPTIONS: { value: RoutineRepeat, label: string }[] =
   { value: 'weekdays', label: 'Días concretos' },
   { value: 'biweekly', label: 'Cada 2 semanas (mismo día)' },
   { value: 'last-workday', label: 'Último laborable del mes (Zaragoza)' },
+  { value: 'last-sunday', label: 'Último domingo del mes' },
   { value: 'monthly', label: 'Cada mes (mismo día)' },
 ]
 
@@ -145,7 +187,7 @@ export function parseRoutineRepeatGroup(grupo?: string | null): ParsedRoutineRep
   if (lower === LAST_WORKDAY_ROUTINE_GROUP) return { repeat: 'last-workday', weekdays: [] }
   if (!lower.startsWith(ROUTINE_REPEAT_GROUP_PREFIX)) return null
   const rest = lower.slice(ROUTINE_REPEAT_GROUP_PREFIX.length)
-  if (rest === 'last-workday' || rest === 'workdays' || rest === 'weekly' || rest === 'biweekly' || rest === 'monthly') {
+  if (rest === 'last-workday' || rest === 'last-sunday' || rest === 'workdays' || rest === 'weekly' || rest === 'biweekly' || rest === 'monthly') {
     return { repeat: rest, weekdays: [] }
   }
   if (rest.startsWith('weekdays:')) {
@@ -213,6 +255,7 @@ function collectRoutineRepeatDates(opts: {
 }): string[] {
   const { from, months } = opts
   if (opts.repeat === 'last-workday') return lastZaragozaWorkdaysFrom(from, months)
+  if (opts.repeat === 'last-sunday') return lastSundaysFrom(from, months)
   if (opts.repeat === 'weekly' || opts.repeat === 'biweekly' || opts.repeat === 'monthly') {
     const start = parseIsoDate(from)
     if (!start) return []
@@ -256,6 +299,7 @@ export function nextRoutineRepeatDate(fromIso: string, repeat: ActiveRoutineRepe
     const next = addMonthsIso(current, 1)
     return next > current ? next : null
   }
+  if (repeat === 'last-sunday') return nextLastSunday(current, from)
   if (repeat === 'last-workday') {
     let year = from.getFullYear()
     let month = from.getMonth() + 1

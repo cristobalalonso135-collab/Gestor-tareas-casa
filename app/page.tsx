@@ -86,8 +86,8 @@ type Tarea = {
   grupo?: string | null
 }
 
-const TIPOS_FORM: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE, 'Reunión']
-const TIPOS_ALL: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE, 'Reunión']
+const TIPOS_FORM: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE]
+const TIPOS_ALL: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE]
 const ESTADOS    = ['Pendiente', 'En espera', 'En progreso', 'Completada', 'Omitida']
 const PRIORIDADES = ['Alta', 'Media', 'Baja']
 const WORK_TYPES_FOR_PRIORITY = new Set(['Operativa', 'T\u00e1ctica', 'Estrat\u00e9gica', EVENT_TYPE])
@@ -108,7 +108,6 @@ const TABS = [
   { key: 'Táctica',     label: 'Tácticas',     emoji: '🎯', sub: '≤90 min' },
   { key: 'Estratégica', label: 'Estratégicas', emoji: '⛰️', sub: '>90 min' },
   { key: EVENT_TYPE,    label: 'Recordatorios', emoji: '📍', sub: 'aviso' },
-  { key: 'Reunión',     label: 'Reuniones',    emoji: '📅', sub: 'bloque' },
   { key: 'Completadas', label: 'Historial',    emoji: '📁', sub: '' },
   { key: 'Plan',          label: 'Plan',         emoji: '☀️', sub: '' },
   { key: 'Casa',          label: 'Casa',         emoji: '🌙', sub: '' },
@@ -123,7 +122,7 @@ const TABS = [
 ]
 
 const NAV_GROUPS: { label: string, keys: string[] }[] = [
-  { label: 'Listas', keys: ['Todas', 'Rutinaria', 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE, 'Reunión', 'Completadas'] },
+  { label: 'Listas', keys: ['Todas', 'Rutinaria', 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE, 'Completadas'] },
   { label: 'Hoy', keys: ['Plan', 'Casa', 'Ejecucion'] },
   { label: 'Revisar', keys: ['Aplazadas', 'Decisiones', 'Rendimiento'] },
   { label: 'Planificar', keys: ['Carga', 'Replanificar', 'Planificacion', 'Priorizar'] },
@@ -164,13 +163,12 @@ const ESTADO_COLORS: Record<string, { bg: string, text: string }> = {
 }
 
 const MASTER_COLS = [
-  { key: 'tipo',            label: 'tipo *',            hint: 'Diaria / Bisemanal (2×/semana) / Semanal / Bimensual (2×/mes) / Mensual / Operativa / Táctica / Estratégica / Recordatorio (aviso, 0 min) / Reunión (bloque con hora)' },
-  { key: 'tarea',           label: 'tarea *',           hint: 'Texto libre con fecha al final. Reunión: Reunión Budget Puma 11/09/2026' },
+  { key: 'tipo',            label: 'tipo *',            hint: 'Diaria / Bisemanal (2×/semana) / Semanal / Bimensual (2×/mes) / Mensual / Operativa / Táctica / Estratégica / Recordatorio (aviso, 0 min)' },
+  { key: 'tarea',           label: 'tarea *',           hint: 'Texto libre con fecha al final' },
   { key: 'notas',           label: 'notas',             hint: 'Texto libre' },
-  { key: 'solicitado_por',  label: 'solicitado_por *',  hint: 'Nombre o equipo' },
   { key: 'prioridad',       label: 'prioridad *',       hint: 'Alta / Media / Baja' },
   { key: 'estado',          label: 'estado *',          hint: 'Pendiente / En espera / En progreso / Completada' },
-  { key: 'tiempo_estimado', label: 'tiempo_estimado *', hint: 'Minutos. Vacío si Recordatorio. En Reunión, duración de la hora inicio-fin' },
+  { key: 'tiempo_estimado', label: 'tiempo_estimado *', hint: 'Minutos. Vacío si Recordatorio' },
   { key: 'tiempo_real',     label: 'tiempo_real',       hint: 'Número entero (minutos)' },
   { key: 'fecha_solicitud', label: 'fecha_solicitud *', hint: 'DD/MM/AAAA' },
   { key: 'deadline',        label: 'deadline *',        hint: 'DD/MM/AAAA' },
@@ -183,7 +181,6 @@ const EXPORT_COLS: { key: string, label: string }[] = [
   { key: 'tipo', label: 'tipo' },
   { key: 'tarea', label: 'tarea' },
   { key: 'notas', label: 'notas' },
-  { key: 'solicitado_por', label: 'solicitado_por' },
   { key: 'prioridad', label: 'prioridad' },
   { key: 'estado', label: 'estado' },
   { key: 'tiempo_estimado', label: 'tiempo_estimado' },
@@ -2931,7 +2928,7 @@ export default function Home() {
     const creatingRepeat = !editId && isRoutineType(form.tipo) && routineRepeat !== 'no'
     if (!creatingRepeat && !form.deadline) e.deadline = 'Obligatorio'
     if (isRoutineType(form.tipo) && routineRepeat === 'weekdays' && routineRepeatWeekdays.length === 0) e.routineRepeat = 'Elige al menos un día'
-    if (!form.solicitado_por.trim()) e.solicitado_por = 'Obligatorio'
+    if (isReunion(form.tipo) && !form.solicitado_por.trim()) e.solicitado_por = 'Obligatorio'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -2959,7 +2956,7 @@ export default function Home() {
       fecha_finalizacion: form.fecha_finalizacion||null,
       tipo: canonicalTipo(form.tipo),
       tiempo_estimado: isEvento(form.tipo) ? 0 : form.tiempo_estimado,
-      solicitado_por: form.solicitado_por,
+      solicitado_por: isReunion(form.tipo) ? form.solicitado_por : '',
       para_casa: form.para_casa,
       tiempo_real_segundos: Math.max(0, Math.floor(form.tiempo_real_segundos ?? Math.round(form.tiempo_real || 0) * 60)),
       ...meetingPayload,
@@ -3838,7 +3835,6 @@ export default function Home() {
       if (seenCsv.has(tarea)){errs.push(`Fila ${rn}: tarea repetida dentro del archivo: "${tarea}"`);continue}
       seenCsv.add(tarea)
       if (!tipo){errs.push(`Fila ${rn}: falta "tipo"`);continue}
-      if (!sp){errs.push(`Fila ${rn}: falta "solicitado_por"`);continue}
       if (!isEvento(tipo) && !tr){errs.push(`Fila ${rn}: falta "tiempo_estimado"`);continue}
       if (!fr){errs.push(`Fila ${rn}: falta "fecha_solicitud"`);continue}
       if (!dr){errs.push(`Fila ${rn}: falta "deadline"`);continue}
@@ -4820,9 +4816,6 @@ export default function Home() {
                 {isEvento(form.tipo) && (
                   <p className="text-[11px] text-gray-400 mt-1">Recordatorio: 0 min, no ocupa carga. Pon plan o deadline; ese día sale en Plan. Si entonces es trabajo de verdad, cámbiala a OP/TA/ES y ponle minutos.</p>
                 )}
-                {isReunion(form.tipo) && (
-                  <p className="text-[11px] text-gray-400 mt-1">Bloque de agenda: ocupa los minutos de la hora. Recalcular no la mueve. El nombre lleva la fecha para no mezclarse en Plan.</p>
-                )}
               </Field>
               {isRoutineType(form.tipo) && (
                 <Field label="Repetir" error={errors.routineRepeat} full>
@@ -4951,24 +4944,10 @@ export default function Home() {
                   {PRIORIDADES.map(p=><option key={p}>{p}</option>)}
                 </select>
               </Field>
-              <Field label={isReunion(form.tipo) ? 'Dónde *' : 'Solicitado por *'} error={errors.solicitado_por}>
-                <input value={form.solicitado_por} onChange={e=>setForm({...form,solicitado_por:e.target.value})} placeholder={isReunion(form.tipo) ? 'Teams o Sala 3' : 'Nombre o equipo'} className={inputCls(errors.solicitado_por)}/>
-              </Field>
               {!isEvento(form.tipo) && !isReunion(form.tipo) && (
               <Field label="Tiempo estimado (min.) *" error={errors.tiempo_estimado}>
                 <input type="number" value={form.tiempo_estimado||''} onChange={e=>setForm({...form,tiempo_estimado:parseInt(e.target.value)||0})} placeholder="30" className={inputCls(errors.tiempo_estimado)}/>
               </Field>
-              )}
-              {isReunion(form.tipo) && (
-                <>
-                  <Field label="Hora inicio *">
-                    <input type="time" value={meetingStart} onChange={e=>setMeetingStart(e.target.value)} className={inputCls()}/>
-                  </Field>
-                  <Field label="Hora fin *" error={errors.tiempo_estimado}>
-                    <input type="time" value={meetingEnd} onChange={e=>setMeetingEnd(e.target.value)} className={inputCls(errors.tiempo_estimado)}/>
-                    <p className="text-[11px] text-gray-400 mt-1">Duración: {minToHM(meetingMinutes(meetingStart, meetingEnd))}</p>
-                  </Field>
-                </>
               )}
               <Field label="Tiempo real (min.)">
                 <input type="number" value={form.tiempo_real||''} onChange={e=>{const minutes=parseInt(e.target.value)||0;setForm({...form,tiempo_real:minutes,tiempo_real_segundos:minutes*60})}} placeholder="0" className={inputCls()}/>
@@ -5039,36 +5018,6 @@ export default function Home() {
                   )
                 })()}
               </Field>
-              )}
-              {isReunion(form.tipo) && !editId && (
-                <>
-                  <Field label="Repetir">
-                    <select
-                      value={meetingRepeat}
-                      onChange={e => setMeetingRepeat(e.target.value as MeetingRepeat)}
-                      className={selectCls()}>
-                      <option value="no">No, solo esta</option>
-                      <option value="daily">Cada día</option>
-                      <option value="weekly">Cada semana</option>
-                      <option value="monthly">Cada mes</option>
-                    </select>
-                    {meetingRepeat === 'weekly' && (form.fecha_planificada || form.deadline) && (
-                      <p className="text-[11px] text-gray-400 mt-1">El mismo {weekdayNameEs(form.fecha_planificada || form.deadline)} que la fecha. Ejemplo: todos los viernes.</p>
-                    )}
-                  </Field>
-                  {meetingRepeat !== 'no' && (
-                    <Field label="Hasta *" error={errors.meetingUntil}>
-                      <input type="date" value={meetingUntil} onChange={e=>setMeetingUntil(e.target.value)} className={inputCls(errors.meetingUntil)}/>
-                      {(() => {
-                        const start = form.fecha_planificada || form.deadline
-                        if (!start || !meetingUntil) return null
-                        const dates = meetingRepeatDates(start, meetingUntil, meetingRepeat)
-                        const cadence = meetingRepeat === 'daily' ? 'cada día' : meetingRepeat === 'weekly' ? `cada ${weekdayNameEs(start)}` : 'cada mes'
-                        return <p className="text-[11px] text-gray-400 mt-1">{dates.length} {dates.length === 1 ? 'reunión' : 'reuniones'} · {cadence}</p>
-                      })()}
-                    </Field>
-                  )}
-                </>
               )}
               {editId && (
                 <Field label="Fuera de jornada">

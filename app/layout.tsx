@@ -16,12 +16,7 @@ export const metadata: Metadata = {
   title: 'Gestor de casa',
   description: 'Gestor de tareas de casa',
   icons: {
-    icon: [
-      { url: '/favicon.ico', sizes: 'any' },
-      { url: '/favicon.png', type: 'image/png', sizes: '256x256' },
-      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
-      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
-    ],
+    icon: [{ url: '/casa-mark.png?v=2', type: 'image/png', sizes: '256x256' }],
   },
 };
 

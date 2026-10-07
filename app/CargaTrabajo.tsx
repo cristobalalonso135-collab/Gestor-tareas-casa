@@ -69,7 +69,7 @@ function daysBetween(a: string, b: string): number {
 
 const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
-const TIPOS_FILTRO: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE, 'Reunión']
+const TIPOS_FILTRO: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE]
 type AtrasoFilter = 'todas' | 'retrasadas' | 'no_retrasadas'
 
 type Props = {
@@ -116,7 +116,7 @@ export default function CargaTrabajo({ onEditTarea, refreshKey }: Props) {
       const mapped = parsed.map((x: string) => x === 'Evento' ? EVENT_TYPE : x)
       const filtered = mapped.filter((x: string) => TIPOS_FILTRO.includes(x))
       const hadAllPrevious = ['Diaria', 'Semanal', 'Mensual', 'Operativa', 'Táctica', 'Estratégica'].every(t => parsed.includes(t))
-      const missingNewTypes = (!parsed.includes('Evento') && !parsed.includes(EVENT_TYPE)) || !parsed.includes('Reunión') || !parsed.includes('Bisemanal') || !parsed.includes('Bimensual')
+      const missingNewTypes = (!parsed.includes('Evento') && !parsed.includes(EVENT_TYPE)) || !parsed.includes('Bisemanal') || !parsed.includes('Bimensual')
       if (hadAllPrevious && missingNewTypes) return TIPOS_FILTRO
       return filtered.length ? filtered : TIPOS_FILTRO
     } catch {

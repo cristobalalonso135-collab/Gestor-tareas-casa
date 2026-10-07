@@ -59,7 +59,7 @@ const CASA_CAPACITY_OVERRIDES_KEY = 'casa_capacity_overrides'
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 const WEEKDAY_HEADERS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-const TIPOS: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE, 'Reunión']
+const TIPOS: string[] = [...ROUTINE_TYPES, 'Operativa', 'Táctica', 'Estratégica', EVENT_TYPE]
 const RUTINA_MARKS: Record<string, { code: string; title: string; border: string }> = {
   Diaria: { code: 'D', title: 'Diaria: fija', border: 'border-solid border-gray-300' },
   Bisemanal: { code: '2S', title: 'Bisemanal: 2 veces/semana', border: 'border-dashed border-gray-400' },
@@ -73,7 +73,6 @@ const DAY_MIX = [
   { key: 'Tácticas', label: 'Tácticas', types: ['Táctica'], bar: TIPO_BAR.Táctica.bar, text: TIPO_BAR.Táctica.text },
   { key: 'Estratégicas', label: 'Estratégicas', types: ['Estratégica'], bar: TIPO_BAR.Estratégica.bar, text: TIPO_BAR.Estratégica.text },
   { key: 'Recordatorios', label: 'Recordatorios', types: [EVENT_TYPE, 'Evento'], bar: TIPO_BAR.Recordatorio.bar, text: TIPO_BAR.Recordatorio.text },
-  { key: 'Reuniones', label: 'Reuniones', types: ['Reunión'], bar: TIPO_BAR.Reunión.bar, text: TIPO_BAR.Reunión.text },
 ]
 
 type CalendarMode = 'trabajo' | 'casa'
@@ -133,7 +132,7 @@ export default function Replanificador({ onEditTarea, refreshKey }: Props) {
       const mapped = saved.map((x: string) => x === 'Evento' ? EVENT_TYPE : x)
       const filtered = mapped.filter((x: string) => TIPOS.includes(x))
       const hadAllPrevious = ['Diaria', 'Semanal', 'Mensual', 'Operativa', 'Táctica', 'Estratégica'].every(t => saved.includes(t))
-      const missingNewTypes = (!saved.includes('Evento') && !saved.includes(EVENT_TYPE)) || !saved.includes('Reunión') || !saved.includes('Bisemanal') || !saved.includes('Bimensual')
+      const missingNewTypes = (!saved.includes('Evento') && !saved.includes(EVENT_TYPE)) || !saved.includes('Bisemanal') || !saved.includes('Bimensual')
       if (hadAllPrevious && missingNewTypes) return TIPOS
       return filtered.length ? filtered : TIPOS
     } catch {
