@@ -13,13 +13,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Gestor hogar',
-  description: 'Panel personal para organizar casa, tareas y proyectos.',
+  title: 'Gestor de casa',
+  description: 'Gestor de tareas de casa',
   icons: {
     icon: [
-      { url: '/favicon.svg', type: 'image/svg+xml' },
       { url: '/favicon.ico', sizes: 'any' },
-      { url: '/favicon.png', type: 'image/png' },
+      { url: '/favicon.png', type: 'image/png', sizes: '256x256' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
     ],
   },
 };
@@ -32,7 +33,6 @@ export default function RootLayout({
   return (
     <html
       lang="es"
-      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>

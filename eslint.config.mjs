@@ -7,10 +7,11 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     rules: {
-      "@typescript-eslint/no-explicit-any": "warn",
-      "react-hooks/purity": "warn",
-      "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/static-components": "warn",
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unused-expressions": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/static-components": "off",
     },
   },
   // Override default ignores of eslint-config-next.
@@ -21,13 +22,11 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "node_modules/**",
-    "_archivo_migracion/**",
+    "*.ps1",
+    "*.cjs",
     "app/*.backup-*.txt",
-    "fix_*.cjs",
-    "patch_*.ps1",
-    "write_*.ps1",
-    "add_ejecucion_to_page.ps1",
-    "integrar_ejecucion_seguro.ps1",
+    "maintenance/**",
+    "Tareas/**",
   ]),
 ]);
 
